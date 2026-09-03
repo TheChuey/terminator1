@@ -1,0 +1,278 @@
+=================================================================
+ the_entire_enchilada_v1-2.txt
+ UPDATES SINCE: the_entire_echilada_v1-1.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1.1)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_echilada_v1-1.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the exact
+deltas, and any new code that was added. Files that did NOT change are
+listed at the end so it is clear nothing was missed.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+The chat experience gained a SECOND, standalone path on top of the
+corner flyout widget that V1.1 introduced.
+
+A brand-new, fully self-contained page `static/chat.html` was added.
+It is a complete chat UI (its own HTML, CSS and JS in one file) that
+talks to the same FastAPI backend as the main app but keeps ALL of its
+markup/styling/scripts inline, so it lives independently of the main
+`static/index.html` app and its `cw-` CSS classes.
+
+Meanwhile, the agent card grid (`static/js/ui/agents.js`) was changed so
+the "Chat" button on each card, in addition to pointing the corner
+widget at that agent (the V1.1 behavior), now ALSO opens the new
+standalone page in a separate named browser window via `window.open`.
+
+Net effect: two coexisting ways to have a chat -
+  1. the in-app corner flyout widget (unchanged from V1.1), and
+  2. a dedicated standalone chat window per agent (new).
+
+The frontend file set went from 13 -> 14 live files under `static/`
+(the only new file this round is `static/chat.html`).
+
+=================================================================
+ 2. FILE: static/chat.html             (NEW FILE)
+=================================================================
+NEW FILE. A standalone, self-contained AI chat page added at
+`static/chat.html` (2644 lines). It does not depend on the main app's
+HTML or CSS; all its own styles and scripts are inline, and every DOM
+class it introduces is prefixed `sc-` so it never collides with the
+main app's `cw-` classes.
+
+PURPOSE (from the file's own header comment):
+
+   "A self-contained chat page that talks to the same FastAPI backend
+    (/api/agents, /api/chat, /api/settings, /api/chat-save) as the main
+    app. It reuses the app's visual language (tokens, buttons, bubbles,
+    spacing) but keeps ALL of its HTML, CSS and JS in this one file so
+    it can be moved or modified easily."
+
+   Open it with an agent id in the URL:  /static/chat.html?agent=<id>
+
+KEY FEATURES:
+
+a) URL-DRIVEN AGENT SELECTION
+   `boot()` reads `?agent=<id>` from the query string and selects that
+   agent; the header updates the agent name/subtitle/avatar and the
+   input placeholder accordingly.
+
+b) ONE ACTIVE ChatSession PER AGENT PER TAB
+   A `sessions` Map keeps one `ChatSession` per agent id; switching
+   agent (or arriving with ?agent=) creates the session on first use
+   and routes sending through the currently active one. History lives
+   entirely in the browser because the backend /api/chat is stateless.
+
+      function switchToAgent(agent) {
+          activeAgent = agent;
+          if (!sessions.has(agent.id)) {
+              sessions.set(agent.id, new ChatSession({
+                  agentId: agent.id,
+                  agentName: agent.name,
+                  model: settings.defaultModel || ""
+              }));
+          }
+          activeSession = sessions.get(agent.id);
+          DOM.agentName.textContent = agent.name;
+          DOM.agentSub.textContent = agent.description || "AI agent";
+          DOM.avatar.textContent = initials(agent.name);
+          DOM.input.placeholder = `Message ${agent.name}...`;
+          setSaveStatus("");
+          clearMessages();
+          buildPanel(agent);
+      }
+
+c) COLLAPSIBLE SIDE PANEL DRIVEN BY A CONFIG ARRAY (PANEL_SECTIONS)
+   The right panel is not hand-written per section; it is rendered from
+   a declarative `PANEL_SECTIONS` array. Each section has a title and a
+   list of typed fields; `createField(field)` turns a field object into
+   the matching DOM node (text/button/checkbox/...).
+
+      const PANEL_SECTIONS = [
+          {
+              title: "Agent Information",
+              fields: [
+                  { type: "text", label: "Status", value: "Ready" },
+                  { type: "text", label: "Agent ID",  valueFrom: "agentId" },
+                  { type: "text", label: "Description", valueFrom: "description" }
+              ]
+          },
+          {
+              title: "Actions",
+              fields: [
+                  { type: "button", label: "Clear Chat", action: "clearChat" }
+              ]
+          },
+          {
+              title: "Behavior",
+              fields: [
+                  { type: "checkbox", name: "autoHi", label: '"hi" on a new chat',
+                    value: AUTO_HI_DEFAULT }
+              ]
+          }
+      ];
+
+d) ACTIONS SURFACE EXPOSED AS window.__scActions
+   The side panel's buttons call into a small public object:
+   `save()` (writes the transcript via /api/chat-save) and `clearChat()`
+   (wipes the active session + rendered bubbles).
+
+      window.__scActions = {
+          save() {
+              if (!activeSession || activeSession.isEmpty) {
+                  setSaveStatus("Nothing to save yet.", "error");
+                  return;
+              }
+              autoSave(activeSession);
+          },
+          clearChat() { startNewChat(); }
+      };
+
+e) getPanelValues()  - reads the current state of every panel control
+   keyed by `data-name`:
+
+      function getPanelValues() {
+          const values = {};
+          document.querySelectorAll(".sc-panel-sections [data-name]")
+              .forEach(node => {
+                  if (node.type === "checkbox") {
+                      values[node.dataset.name] = node.checked;
+                  } else {
+                      values[node.dataset.name] = node.value;
+                  }
+              });
+          return values;
+      }
+
+f) startNewChat()   - the single source of truth for "clear everything":
+
+      function startNewChat() {
+          if (activeSession) { activeSession.newChat(); }
+          clearMessages();
+          setSaveStatus("Chat cleared.", "ok");
+          DOM.input.focus();
+      }
+
+g) EXPERIMENTAL AUTO-"hi"  (maybeAutoHi)
+   When the panel's autoHi checkbox is on and the active agent has an
+   empty session, it auto-fills "hi" into the input and sends it:
+
+      function maybeAutoHi() {
+          if (!activeSession || !activeSession.isEmpty || !DOM.input) return;
+          const values = getPanelValues();
+          if (values.autoHi !== true) return;
+          DOM.input.value = AUTO_HI_TEXT;
+          autogrow();
+          handleSend();
+      }
+
+   (AUTO_HI_TEXT = "hi"; AUTO_HI_DEFAULT = true.)
+
+h) COMMENTED AS "single source of truth used by the header New Chat
+   button and the side panel Clear Chat action."
+
+NOTABLE CONSTANTS / CONSTRAINTS CARRIED OVER FROM THE MAIN APP
+   - AUTO_HI_TEXT = "hi"; AUTO_HI_DEFAULT = true
+   - Reuses the same /api/* endpoints and design tokens as index.html.
+
+=================================================================
+ 3. FILE: static/js/ui/agents.js          (MODIFIED)
+=================================================================
+NET DELTA (one functional change within `buildCard`):
+
+The card's "Chat" button previously called only `onSelect(agent)` (which
+points the in-app corner widget at that agent - the V1.1 behavior). It
+now ALSO opens the standalone chat page in a separate named window.
+
+The button click handler changed from (V1.1):
+
+   start.addEventListener("click", () => {
+       if (typeof onSelect === "function") {
+           onSelect(agent);
+       }
+   });
+
+to (now):
+
+   start.addEventListener("click", () => {
+       if (typeof onSelect === "function") {
+           onSelect(agent);
+       }
+       // Also open the standalone chat page (static/chat.html) in a new tab.
+       // The in-app corner widget still works on top of this, and this new
+       // page keeps its own per-agent session in this browser tab.
+       window.open(
+           `/static/chat.html?agent=${encodeURIComponent(agent.id)}`,
+           "ai-chat",
+           "width=800,height=640,resizable=yes,scrollbars=yes"
+       );
+   });
+
+Notes:
+   - The added `window.open` opens `?agent=<id>` for the surface being
+     clicked. The popup name "ai-chat" means clicking another agent's
+     Chat reuses the SAME window (re-pointing it at the new agent).
+   - `renderAgents()` still returns the agents array and `buildCard`
+     signal handling is otherwise unchanged from V1.1.
+
+=================================================================
+ 4. FILES NOT CHANGED IN THIS DELTA
+=================================================================
+The following files are identical to their V1.1 capture; no updates were
+made to them in this round:
+
+   - static/index.html
+   - static/css/styles.css
+   - static/js/app.js
+   - static/js/classes/chat-window.js
+   - static/js/classes/ChatSession.js
+   - static/js/logic/models.js
+   - static/js/logic/chat-formatter.js
+   - static/js/ui/markdown.js
+   - static/js/ui/config.js
+   - static/js/ui/config-form.js
+   - static/js/api/api.js
+
+   (The backend - server.py and everything under app/ - was also
+    unchanged this round.)
+
+=================================================================
+ 5. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_enchilada_v1-2.txt`. It is an "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline (the_entire_echilada_v1-1.txt). It is NOT a full source dump;
+it describes each changed file, the exact deltas, and the new/added
+code, plus an explicit list of files that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, `static/`, and the backend under
+   `app/`) against the versions/descriptions captured in
+   `the_entire_enchilada_v1-2.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_enchilada_v1-3.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).

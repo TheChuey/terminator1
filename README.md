@@ -111,7 +111,7 @@ refresh — the agent appears automatically in `GET /api/agents` and the
 frontend selector.
 
 Full field reference, tool catalog, copy-paste example, and troubleshooting:
-**[CREATING_AGENTS.md](CREATING_AGENTS.md)**
+**[CREATING_AGENTS.md](documentation/CREATING_AGENTS.md)**
 
 ## Adding a new tool
 
