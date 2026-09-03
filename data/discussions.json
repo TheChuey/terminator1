@@ -1,0 +1,180 @@
+[
+  {
+    "id": "disc-mt7k2vs1kkikwk",
+    "title": "hello",
+    "agentId": "basic_chat_agent",
+    "agentName": "Basic Chat Agent",
+    "model": "gemma4:e2b",
+    "createdAt": "2026-08-24T18:14:47.905Z",
+    "updatedAt": "2026-08-24T11:15:14",
+    "messages": [
+      {
+        "id": "msg-mt7k2zc4x3n3of",
+        "discussionId": "disc-mt7k2vs1kkikwk",
+        "parentId": null,
+        "role": "user",
+        "author": "You",
+        "text": "hello",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:14:52.516Z",
+        "edited": false,
+        "saved": false
+      },
+      {
+        "id": "msg-mt7k31b402su2l",
+        "discussionId": "disc-mt7k2vs1kkikwk",
+        "parentId": null,
+        "role": "assistant",
+        "author": "Basic Chat Agent",
+        "text": "{\"name\": \"get_current_date\", \"arguments\": {}}",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:14:55.072Z",
+        "edited": false,
+        "saved": false
+      }
+    ]
+  },
+  {
+    "id": "disc-mt7k3gitz2w1d3",
+    "title": "hello",
+    "agentId": "basic_chat_agent",
+    "agentName": "Basic Chat Agent",
+    "model": "gemma4:e2b",
+    "createdAt": "2026-08-24T18:15:14.789Z",
+    "updatedAt": "2026-08-24T11:16:17",
+    "messages": [
+      {
+        "id": "msg-mt7k3kqstwsz0n",
+        "discussionId": "disc-mt7k3gitz2w1d3",
+        "parentId": null,
+        "role": "user",
+        "author": "You",
+        "text": "hello",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:15:20.260Z",
+        "edited": false,
+        "saved": false
+      },
+      {
+        "id": "msg-mt7k3rowne6rne",
+        "discussionId": "disc-mt7k3gitz2w1d3",
+        "parentId": null,
+        "role": "assistant",
+        "author": "Basic Chat Agent",
+        "text": "Hello Jesus. How can I help you?",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:15:29.264Z",
+        "edited": false,
+        "saved": false
+      },
+      {
+        "id": "msg-mt7k491b0uysg5",
+        "discussionId": "disc-mt7k3gitz2w1d3",
+        "parentId": null,
+        "role": "user",
+        "author": "You",
+        "text": "what is your purpose",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:15:51.743Z",
+        "edited": false,
+        "saved": false
+      },
+      {
+        "id": "msg-mt7k4ad4dcjz42",
+        "discussionId": "disc-mt7k3gitz2w1d3",
+        "parentId": null,
+        "role": "assistant",
+        "author": "Basic Chat Agent",
+        "text": "My purpose is to be a helpful assistant. I can help you with questions, tasks, and information by using the tools available to me.",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:15:53.464Z",
+        "edited": false,
+        "saved": false
+      },
+      {
+        "id": "msg-mt7k4rgc6cacp5",
+        "discussionId": "disc-mt7k3gitz2w1d3",
+        "parentId": null,
+        "role": "user",
+        "author": "You",
+        "text": "who is the user",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:16:15.612Z",
+        "edited": false,
+        "saved": false
+      },
+      {
+        "id": "msg-mt7k4sngf4vxz7",
+        "discussionId": "disc-mt7k3gitz2w1d3",
+        "parentId": null,
+        "role": "assistant",
+        "author": "Basic Chat Agent",
+        "text": "You are the user interacting with me. I am here to assist you with your questions and tasks.",
+        "attachments": [],
+        "timestamp": "2026-08-24T18:16:17.164Z",
+        "edited": false,
+        "saved": false
+      }
+    ]
+  },
+  {
+    "id": "disc-mt7k554o117heh",
+    "title": "Chat with Basic Chat Agent",
+    "agentId": "basic_chat_agent",
+    "agentName": "Basic Chat Agent",
+    "model": "",
+    "createdAt": "2026-08-24T18:16:33.336Z",
+    "updatedAt": "2026-08-24T11:16:33",
+    "messages": []
+  },
+  {
+    "id": "disc-mt8x4osxfmx287",
+    "title": "Chat with Basic Chat",
+    "agentId": "basic_chat",
+    "agentName": "Basic Chat",
+    "model": "",
+    "createdAt": "2026-08-25T17:07:53.361Z",
+    "updatedAt": "2026-08-25T10:07:53",
+    "messages": []
+  },
+  {
+    "id": "disc-mt8x4rvc1i8dtg",
+    "title": "Chat with Basic Chat Agent",
+    "agentId": "basic_chat_agent",
+    "agentName": "Basic Chat Agent",
+    "model": "",
+    "createdAt": "2026-08-25T17:07:57.336Z",
+    "updatedAt": "2026-08-25T10:07:57",
+    "messages": []
+  },
+  {
+    "id": "disc-mthh2phf3gz3qr",
+    "title": "Chat with Basic Chat Agent",
+    "agentId": "basic_chat_agent",
+    "agentName": "Basic Chat Agent",
+    "model": "",
+    "createdAt": "2026-08-31T16:48:22.659Z",
+    "updatedAt": "2026-08-31T09:48:22",
+    "messages": []
+  },
+  {
+    "id": "disc-mthh2stjkykl17",
+    "title": "Chat with Basic Chat",
+    "agentId": "basic_chat",
+    "agentName": "Basic Chat",
+    "model": "",
+    "createdAt": "2026-08-31T16:48:26.983Z",
+    "updatedAt": "2026-08-31T09:48:26",
+    "messages": []
+  },
+  {
+    "id": "disc-mthko2ytzf9exz",
+    "title": "Chat with Basic Chat",
+    "agentId": "basic_chat",
+    "agentName": "Basic Chat",
+    "model": "",
+    "createdAt": "2026-08-31T18:28:58.757Z",
+    "updatedAt": "2026-08-31T11:28:58",
+    "messages": []
+  }
+]

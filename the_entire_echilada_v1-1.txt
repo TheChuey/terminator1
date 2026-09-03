@@ -1,0 +1,300 @@
+=================================================================
+ the_entire_echilada_v1-1.txt
+ UPDATES SINCE: the_entire_enchilada_v1.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_enchilada_v1.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the
+exact deltas, and any new code that was added. Files that did NOT
+change are listed at the end so it is clear nothing was missed.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+The chat UI moved from a "pick an agent, it opens its own pop-out
+window, pick another, the old one is destroyed" model to a SINGLE
+persistent floating corner widget. One `ChatWindow` is built once at
+boot in a new "flyout" mode. It rests as a small round launcher
+button in the bottom-right corner, expands into a full chat panel
+when clicked, and switches which agent it is talking to via a
+dropdown in its own header. Each agent keeps its own ChatSession so
+history survives switching. The page underneath stays fully usable
+(flyout mode has no backdrop). This one change touched five files
+below.
+
+=================================================================
+ 2. FILE: static/index.html
+=================================================================
+DELTA (copy change only):
+  The intro line under the page heading changed:
+
+  V1 text:  "Pick an agent below to open a chat with it in the pop-up window."
+  Now text: "Pick an agent below to chat with it in the floating chat, or use
+             the chat button in the corner."
+
+  This reflects that selecting a card no longer opens a one-off pop-up;
+  it points the existing corner floating widget at that agent (and
+  expands it if it was collapsed).
+
+=================================================================
+ 3. FILE: static/css/styles.css
+=================================================================
+NET DELTAS:
+
+a) Z-INDEX BUMP
+   The chat z-index variable was raised so the floating widget sits
+   above the page content/header (which occupy the low single digits):
+
+     --cw-z-index: 90;      (V1)
+     --cw-z-index: 9000;    (now)
+
+   The widget and its launcher use `z-index: var(--cw-z-index)`.
+
+b) LEGACY SECTION 6 CLEANUP
+   The old "SECTION 6: CHAT POPUP" markup/positioning block was removed
+   from the live stylesheet and kept only as a reference comment
+   ("legacy chat popup - markup removed, kept as reference"). The
+   generic `.chat-window-launcher` rule (used by NON-flyout mode) is
+   still present and now references `var(--cw-z-index)`.
+
+c) NEW FLYOUT WIDGET BLOCK (the main addition)
+   A new block "---------- flyout widget (persistent corner chat) ----------"
+   was added under SECTION 8. Net effect:
+
+     .chat-window.cw-widget
+       - position: fixed; right/bottom 24px; left/top auto
+       - z-index: var(--cw-z-index)
+       - flex column; 380x560; min 300x380; max (100vw-24)x(100vh-24)
+       - border-radius: 16px; overflow hidden
+       - transform-origin: bottom right
+       - transition on transform/opacity
+
+     .chat-window.cw-widget.cw-collapsed
+       - collapses to a 60x60 round bubble (border-radius 50%, min 0)
+       - transform: translateY(12px); opacity .94; cursor pointer
+       - hides .cw-window-header/.cw-window-body/.cw-composer
+       - :hover -> translateY(8px), opacity 1
+
+     .chat-window.cw-widget.cw-expanded
+       - transform: translateY(0); opacity 1; cursor default
+
+     .cw-widget-launcher  (the always-visible corner button)
+       - absolute inset 0; round; gradient bg; white icon
+       - :hover brightness filter
+       - hidden when the widget is expanded
+
+     .chat-window.cw-widget .cw-window-header
+       - cursor: default (widget is not draggable)
+
+     .cw-agent-select  (header dropdown)
+       - flex 0 1 auto; max-width 140px; styled select + :focus ring
+
+     Small-screen @media (max-width:600px) overrides:
+       - collapsed widget pinned bottom-right 14px, stays a 60px bubble
+       - expanded widget fills the screen (all insets 8px)
+
+d) NO BACKDROP IN FLYOUT MODE
+   Flyout mode deliberately renders no `.cw-backdrop` (the page remains
+   usable). The backdrop CSS still exists for non-flyout windows.
+
+=================================================================
+ 4. FILE: static/js/app.js
+=================================================================
+FULL REWRITE of the wiring. Net change vs V1:
+
+V1 model (removed):
+   - `activeChat` / `activeSession` globals (one visible window/session).
+   - Picking an agent DESTROYED the old window and built a brand-new one
+     (onAgentSelected -> activeChat.destroy(); new ChatWindow(agent)).
+   - Handlers read globals (handleSend(text, chat), autoSave()).
+   - Only "Save chat" action; no per-agent session persistence.
+
+Now:
+   STATE
+     - settings, agents, widget, activeAgentId
+     - agentSessions = new Map()   // agentId -> ChatSession
+       One ChatSession per agent so history survives switching agents in
+       the single widget.
+     - AUTO_HI_TEXT = "hi"; AUTO_HI_DEFAULT = true (experimental auto-hi)
+
+   BOOT
+     - renderAgents() now RETURNS the agent list (see agents.js).
+     - After rendering cards + config, boot() calls buildWidget() if
+       agents exist.
+
+   buildWidget()
+     - Creates ONE flyout ChatWindow for agents[0] (config with
+       layout.flyout = true).
+     - widget.setAgents(agents)   -> fills the header switcher
+     - selectSession(defaultAgent, false)  -> no auto-hi on startup
+     - widget.onSend(...)         -> handleSend(activeSession,...)
+     - widget.onAction("saveChat"/"clearChat") -> save/clear handlers
+     - widget.onSwitchAgent(agentId) -> switchToAgent(that agent)
+
+   NEW per-agent helpers
+     - activeSession()            -> agentSessions.get(activeAgentId)
+     - onAgentSelected(agent)     -> switchToAgent(agent); open() if collapsed
+     - switchToAgent(agent, autoHi=true) -> setActiveAgent + selectSession
+     - selectSession(agent, autoHi=false)
+         * creates the ChatSession for this agent if missing (with
+           settings.defaultModel)
+         * sets activeAgentId
+         * auto-"hi" fires only the FIRST time meeting this agent AND
+           only once the widget is expanded AND the autoHi toggle is on
+           (widget.isOpen && widget.getPanelValues().autoHi === true)
+
+   SEND / SAVE (now take session + chat explicitly)
+     - handleSend(session, chat, text)
+     - autoSave(session, chat)    -> writes transcript via /api/chat-save
+     - handleSaveAction(session, chat)
+     - handleClearAction(session, chat)  -> session.newChat() + chat.clearMessages()
+
+   buildAgentConfig(agent)
+     - Actions section now has "Save chat" AND "Clear chat" buttons
+     - New "Behavior" section with an autoHi toggle:
+         { type:"toggle", name:"autoHi", label:'"Say hi" on a new chat',
+           value: AUTO_HI_DEFAULT }
+
+=================================================================
+ 5. FILE: static/js/classes/chat-window.js
+=================================================================
+THE PILLAR OF THE CHANGE. Flyout mode was added to the existing
+engine. Net delta vs V1:
+
+CONSTRUCTOR
+   - this._flyout = Boolean(config.layout && config.layout.flyout)
+   - When flyout:
+       - rightPanel forced false, resizable forced false
+       (the corner widget shows just the chat, no side panel)
+   - New state: this.agentOptions = []; this.agentChangeHandler = null
+   - New DOM refs: this._agentSelect = null; this._widgetLauncher = null
+
+_build()
+   - Non-flyout root keeps class "cw-hidden" + explicit width/height.
+   - Flyout root starts as "chat-window cw-widget cw-collapsed" and gets
+     NO fixed width/height (CSS controls it).
+   - In flyout mode appends the widget launcher inside the root and does
+     NOT build a backdrop or a separate floating launcher.
+
+NEW _buildWidgetLauncher()
+   - The persistent corner button (`.cw-widget-launcher`) holding a
+     chat icon. Clicking it calls open().
+
+_buildHeader()
+   - In flyout mode appends a `.cw-agent-select` dropdown; its change
+     event calls agentChangeHandler(value).
+   - Avatar/name/subtitle elements (this._avatar/_nameEl/_subEl) are
+     now kept so setActiveAgent can refresh them.
+
+open()  (flyout branch)
+   - Adds "cw-expanded", removes "cw-collapsed"/"cw-minimized", hides
+     the widget launcher, renders welcome, focuses input. Returns early
+     (no backdrop handling needed).
+
+close()  (flyout branch)
+   - Adds "cw-collapsed", removes "cw-expanded"/"cw-minimized", shows
+     the widget launcher again. Returns early.
+
+minimize()  (flyout branch)
+   - Treats minimize as collapse-to-button: if currently minimized ->
+     open(); else -> close().
+
+NEW PUBLIC API (flyout)
+   - setAgents(agents = [])
+       Stores agentOptions, rebuilds the <select> options (values are
+       agent ids; the one matching this.config.id is selected).
+   - setActiveAgent(agentId)
+       Finds the agent in agentOptions; updates name/title/description/
+       config.id; refreshes _nameEl/_subEl/_avatar/_input placeholder
+       and the _agentSelect value; then clearMessages().
+   - onSwitchAgent(callback)
+       Registers agentChangeHandler.
+
+_keepInViewport()  (FIX)
+   - Now only adjusts left/top if the window has been dragged (inline
+     left/top present). On first open in flyout the CSS uses right/bottom
+     anchoring and  this must not be overwritten with stale
+     getBoundingClientRect values.
+       const hasInlinePosition =
+           this.element.style.left !== "" || this.element.style.top !== "";
+       if (hasInlinePosition) { ...clamp left/top... }
+
+_bindWindow()
+   - Wires _widgetLauncher click -> open.
+   - Header drag binding is skipped when this._flyout (widget is pinned,
+     not draggable).
+
+NOT CHANGED vs V1 (for orientation only):
+   - RightPanel class, drag/resize, message bubble rendering, typing
+     indicator, welcome state, send()/addMessage() flow, setWaiting(),
+     setSaveStatus(), onSend/onAction/onTogglePanel/triggerAction/destroy.
+
+=================================================================
+ 6. FILE: static/js/ui/agents.js
+=================================================================
+NET DELTA (one functional change):
+   renderAgents() now RETURNS the fetched agents array so app.js can
+   build the widget with it:
+
+   V1: on success called buildCard for each agent and returned undefined;
+       empty/error paths also returned undefined.
+   Now:
+       - success  -> return agents;
+       - error    -> return [];
+       - empty    -> return [];
+
+   (The card grid rendering itself, buildCard, showEmpty, showError are
+    unchanged.)
+
+=================================================================
+ 7. FILES NOT CHANGED IN THIS DELTA
+=================================================================
+The following files are identical to their V1 capture; no updates were
+made to them in this round:
+
+   - static/js/logic/models.js
+   - static/js/logic/chat-formatter.js
+   - static/js/ui/markdown.js
+   - static/js/ui/config.js
+   - static/js/ui/config-form.js
+   - static/js/api/api.js
+   - static/js/classes/ChatSession.js
+
+=================================================================
+ 8. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_echilada_v1-1.txt`. It is a "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline. It is NOT a full source dump; it describes each changed file,
+the exact deltas, and the new/added code, plus an explicit list of files
+that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, and `static/index.html`) against
+   the versions/descriptions captured in `the_entire_echilada_v1-1.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_echilada_v1-2.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).

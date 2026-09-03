@@ -1,0 +1,17 @@
+ Instantiation — per request, never long-lived:
+server.py:142 → agent = build_agent(agent_id, model=data.model or None) inside POST /api/chat
+build_agent() in app/agents/factory.py:30 does the actual construction: loads definition (line 41), resolves tools (44–46), builds profile/system prompt (48), then return Agent(...) at factory.py:51
+2. Chat history — frontend owns it; server is stateless:
+Browser keeps messages in localStorage (static/js/app.js) and sends them as history: [{role, content}] in each /api/chat payload
+replay_history() at factory.py:54–61 appends those turns into the fresh agent's messages, mapping "ai" → "assistant"
+Agent.think() at app/core/agent.py:123 then: inserts system prompt at slot 0 if missing (125–126), appends your new user message (128), appends the LLM's reply dict (133)
+Every request rebuilds a new Agent from scratch — nothing persists server-side between messages
+3. Act/observe tool usage — all in think(), app/core/agent.py:
+137: extract calls — native message.tool_calls or plain-text JSON fallback via _extract_text_tool_calls() (defined at line ~80)
+141–143: the loop — result = self.act(tool_call) then self.observe(name, result)
+150–163 (act): runs the real function self.tools[name](**args) at line 156; returns error strings instead of raising
+165–167 (observe): appends {"role": "tool", "content": result, "name": name} to history
+145–146: second ask_llm() round with observations included → final answer returned at 148
+▣  Plan · Big Pickle · 3m 51s
+Plan·Big PickleOpenCode Zen
+C:\Agent_protopytes\short_circuit_1

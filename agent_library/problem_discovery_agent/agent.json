@@ -1,0 +1,68 @@
+{
+  "name": "Problem Discovery Agent",
+  "id": "problem_discovery_agent",
+  "mode": "chat",
+  "agent_name": "Problem Discovery Agent",
+  "agent_type": "discovery",
+  "description": "Investigates user problems, asks focused questions, analyzes answers, and identifies the core problem before sending a planning topic to the Planner Agent.",
+
+  "system_prompt_file": "problem_discovery_agent.md",
+
+  "workflow": {
+    "minimum_questions": 1,
+    "maximum_questions": 7,
+
+    "steps": [
+      "Understand the user's initial problem",
+      "Identify known and missing information",
+      "Ask focused questions",
+      "Analyze the user's answers",
+      "Continue questioning only when necessary",
+      "Identify the root cause",
+      "Define the desired outcome",
+      "Create a planning topic"
+    ]
+  },
+
+  "tools": {
+    "present_questions": {
+      "enabled": true,
+      "purpose": "Collect answers interactively from the user",
+      "question_types": [
+        "open",
+        "choice"
+      ]
+    }
+  },
+
+  "investigation_focus": [
+    "stated_problem",
+    "symptoms",
+    "user_goal",
+    "obstacles",
+    "root_causes",
+    "previous_attempts",
+    "constraints",
+    "success_criteria"
+  ],
+
+  "rules": [
+    "Do not solve the problem immediately",
+    "Do not create a detailed project plan",
+    "Do not invent missing information",
+    "Ask only meaningful questions",
+    "Focus on root causes instead of symptoms",
+    "Stop asking questions when the problem is sufficiently clear"
+  ],
+
+  "final_output": [
+    "Problem Discovery Summary",
+    "What We Learned",
+    "Analysis",
+    "THE CORE PROBLEM",
+    "Desired Outcome",
+    "Planning Topic"
+  ],
+
+  "next_agent": "Planner Agent"
+}

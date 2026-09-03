@@ -1,0 +1,343 @@
+/* ==========================================
+   LAYOUT.CSS
+   WHAT THIS FILE DOES:
+   - Builds the page skeleton shared by EVERY page:
+       .app-shell  -> a row: sidebar on the left, main content right
+       .sidebar    -> navigation column (collapsible)
+       .main       -> everything else (header + content)
+   - Handles the collapsed-sidebar state and responsive
+     (tablet / mobile) behavior.
+
+   Think of this file as the "walls" of the app.
+   Buttons, cards, and messages live in the other CSS files.
+========================================== */
+
+
+/* ------------------------------------------
+   LEVEL 1 - APPLICATION SHELL
+   A flex ROW: [sidebar] [main]
+------------------------------------------ */
+
+.app-shell {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    min-height: 100vh;
+}
+
+
+/* ------------------------------------------
+   SIDEBAR
+   Fixed-width column. `flex: 0 0 ...` means:
+   "do not grow, do not shrink, start at this size".
+------------------------------------------ */
+
+.sidebar {
+    display: flex;
+    flex: 0 0 var(--sidebar-width);
+    flex-direction: column;
+    width: var(--sidebar-width);
+    padding: 20px 12px;
+    background: var(--color-sidebar);
+    color: #fff;
+    transition: flex-basis 0.2s ease, width 0.2s ease;
+}
+
+.logo {
+    flex: 0 0 auto;
+    padding: 15px;
+    margin-bottom: 20px;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* Nav entries are links styled to look like buttons. */
+.nav-item,
+.sidebar-toggle {
+    width: 100%;
+    border: 0;
+    border-radius: var(--radius-small);
+    padding: 12px 15px;
+    background: transparent;
+    color: #fff;
+    text-align: left;
+    font: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.nav-item:hover,
+.nav-item.active,
+.sidebar-toggle:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.sidebar-toggle {
+    flex: 0 0 auto;
+    margin-top: 20px;
+}
+
+
+/* ------------------------------------------
+   MAIN WORKSPACE
+   A flex COLUMN: [page header] [scrolling content]
+   `width: 0` stops long content from stretching
+   the whole page sideways.
+------------------------------------------ */
+
+.main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    width: 0;
+    min-width: 0;
+    min-height: 100vh;
+    background: var(--color-surface);
+}
+
+.page {
+    /* Scrollable body used by agents / discussions / history / settings */
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: clamp(20px, 4vw, 40px);
+}
+
+.page-header {
+    max-width: 900px;
+    margin-bottom: 25px;
+}
+
+.page-header h1 {
+    margin: 0 0 6px;
+    font-size: clamp(21px, 2.4vw, 27px);
+}
+
+.page-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 15px;
+}
+
+
+/* ------------------------------------------
+   AGENT HEADER (top strip of the chat page)
+------------------------------------------ */
+
+.agent-header {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 20px;
+    padding: 16px clamp(18px, 4vw, 40px);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.agent-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 12px;
+}
+
+.agent-title h1 {
+    margin: 0 0 5px;
+    font-size: clamp(19px, 2vw, 24px);
+}
+
+.agent-title p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 14px;
+}
+
+.header-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.header-controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+}
+
+.status {
+    flex: 0 0 auto;
+    color: var(--color-success);
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--color-success);
+}
+
+
+/* ------------------------------------------
+   COLLAPSED SIDEBAR
+   JavaScript adds/removes the class "collapsed";
+   CSS does all the visual work.
+------------------------------------------ */
+
+.sidebar.collapsed {
+    flex-basis: var(--sidebar-collapsed-width);
+    width: var(--sidebar-collapsed-width);
+}
+
+.sidebar.collapsed .logo {
+    overflow: hidden;
+    padding-left: 8px;
+    padding-right: 8px;
+    text-align: center;
+    font-size: 0;               /* hides the word "AI Factory" */
+}
+
+.sidebar.collapsed .nav-item,
+.sidebar.collapsed .sidebar-toggle {
+    overflow: hidden;
+    padding-left: 8px;
+    padding-right: 8px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.sidebar.collapsed .nav-item {
+    font-size: 0;               /* hides link text, keeps icons/letters */
+}
+
+
+/* ------------------------------------------
+   JS SHELL WRAPPERS (built by ui/workspace.js)
+   Transparent flex pass-throughs. The wrappers take over the roles
+   that .thread / .reply-area / .page played directly under .main,
+   so every existing rule inside them keeps working unchanged.
+------------------------------------------ */
+
+.workspace-middle {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.workspace-bottom {
+    flex: 0 0 auto;
+}
+
+/* The discussions dock lives in workspace-bottom (outside .page),
+   so it re-applies the same horizontal padding the page uses. */
+.workspace-bottom .composer-dock {
+    width: 100%;
+    padding: 0 clamp(20px, 4vw, 40px) 24px;
+}
+
+@media (max-width: 800px) {
+    .workspace-bottom .composer-dock {
+        padding: 0 22px 20px;
+    }
+}
+
+@media (max-width: 600px) {
+    .workspace-bottom .composer-dock {
+        padding: 0 14px 16px;
+    }
+}
+
+
+/* ------------------------------------------
+   TABLET
+------------------------------------------ */
+
+@media (max-width: 800px) {
+
+    .sidebar {
+        flex-basis: 180px;
+        width: 180px;
+    }
+
+    .page {
+        padding: 22px;
+    }
+}
+
+
+/* ------------------------------------------
+   MOBILE
+   The sidebar becomes a top bar; nav wraps into rows.
+------------------------------------------ */
+
+@media (max-width: 600px) {
+
+    .app-shell {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        flex: 0 0 auto;
+        width: 100%;
+        min-height: auto;
+        padding: 8px;
+    }
+
+    .logo {
+        margin-bottom: 4px;
+        padding: 8px;
+        text-align: center;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .nav-item {
+        width: auto;
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+
+    .sidebar-toggle {
+        display: none;
+    }
+
+    .main {
+        width: 100%;
+        min-height: calc(100vh - 100px);
+    }
+
+    .agent-header {
+        align-items: flex-start;
+        padding: 15px;
+    }
+
+    .agent-title h1 {
+        font-size: 18px;
+    }
+
+    .status {
+        font-size: 12px;
+    }
+
+    .page {
+        padding: 18px 14px;
+    }
+}

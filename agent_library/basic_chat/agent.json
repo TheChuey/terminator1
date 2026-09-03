@@ -1,0 +1,8 @@
+{
+  "id": "basic_chat",
+  "name": "Basic Chat",
+  "description": "A simple chatbot with no tools.",
+  "mode": "chat",
+  "model": null,
+  "tools": []
+}

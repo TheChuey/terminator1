@@ -1,0 +1,328 @@
+/* ==========================================
+   COMPONENTS.CSS
+   WHAT THIS FILE DOES:
+   - Reusable building blocks shared by ALL pages:
+       buttons (.btn ...)
+       form fields (select, input, label.field)
+       cards (agent list, panels)
+       badges
+       attachment chips
+       modals (pop-up dialogs, used by the AI Wizard)
+       empty states and status messages
+
+   If a style is needed on more than one page,
+   it belongs in this file.
+========================================== */
+
+
+/* ------------------------------------------
+   BUTTONS
+   Base class .btn + a modifier for the color.
+------------------------------------------ */
+
+.btn {
+    border: 1px solid transparent;
+    border-radius: var(--radius-small);
+    padding: 9px 16px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+}
+
+.btn-secondary {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-text-soft);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.btn-danger {
+    border-color: #f3c1c1;
+    background: #fff5f5;
+    color: var(--color-danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #fde8e8;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+
+/* ------------------------------------------
+   FORM FIELDS
+   Wrap a control like this:
+   <label class="field"> Label text <select ...> </label>
+------------------------------------------ */
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--color-text-soft);
+}
+
+.field select,
+.field input,
+.field textarea {
+    width: 100%;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 9px 12px;
+    font: inherit;
+    outline: none;
+    background: #fff;
+}
+
+.field select:focus,
+.field input:focus,
+.field textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+
+/* ------------------------------------------
+   CARDS AND PANELS
+------------------------------------------ */
+
+.panel {
+    max-width: 900px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    padding: 20px;
+    margin-bottom: 18px;
+}
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    max-width: 1000px;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    padding: 18px;
+}
+
+.card h3 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.card p {
+    margin: 0;
+    flex: 1 1 auto;
+    color: var(--color-text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+
+/* ------------------------------------------
+   BADGES  (small labels like "chat" or "tools")
+------------------------------------------ */
+
+.badge {
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 3px 10px;
+    background: var(--color-accent);
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+
+/* ------------------------------------------
+   ATTACHMENT CHIPS
+   Little pills showing a chosen file name.
+------------------------------------------ */
+
+.chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 999px;
+    background: #fff;
+    padding: 4px 6px 4px 12px;
+    font-size: 13px;
+    color: var(--color-text-soft);
+}
+
+.chip-remove {
+    border: 0;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    line-height: 1;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+
+.chip-remove:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+
+/* ------------------------------------------
+   MODALS  (pop-up dialog boxes)
+   The overlay covers the screen; .hidden hides it.
+------------------------------------------ */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;                    /* stretch over the whole screen */
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(15, 23, 42, 0.55);
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.modal {
+    display: flex;
+    flex-direction: column;
+    width: min(640px, 100%);
+    max-height: 90vh;
+    border-radius: 12px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-modal);
+    overflow: hidden;
+}
+
+.modal-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 19px;
+}
+
+.modal-close {
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.modal-close:hover {
+    color: var(--color-danger);
+}
+
+.modal-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.modal-footer {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+
+/* ------------------------------------------
+   EMPTY STATES & STATUS MESSAGES
+------------------------------------------ */
+
+.empty-state {
+    max-width: 900px;
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-medium);
+    padding: 40px 25px;
+    text-align: center;
+    color: var(--color-text-muted);
+}
+
+.status-message {
+    margin-top: 12px;
+    font-size: 14px;
+    min-height: 20px;
+}
+
+.status-message.ok     { color: var(--color-success); }
+.status-message.error  { color: var(--color-danger); }
+
+/* ------------------------------------------
+   POST SECTIONS (built by ui/post-sections.js)
+------------------------------------------ */
+
+.section-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.section-note {
+    margin-left: auto;
+    font-size: 13px;
+}
+
+.hidden {
+    display: none !important;
+}

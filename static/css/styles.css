@@ -1,0 +1,1424 @@
+
+/* ================================================================
+   STYLES.CSS  -  THE ONE STYLESHEET FOR THE WHOLE APP
+   ================================================================
+   All previous styles (base.css + layout.css + components.css +
+   thread.css + board.css) are merged HERE, sectioned with comment
+   banners. Additions for the pop-up chat interface live in
+   SECTION 6 (CHAT POPUP).
+
+   CONTENTS:
+     SECTION 1  BASE         - design tokens, reset, typography
+     SECTION 2  LAYOUT       - app shell, page, agent cards, header
+     SECTION 3  COMPONENTS   - buttons, cards, fields, badges, modal
+     SECTION 4  READOUT      - markdown bubbles, code, lists (shared)
+     SECTION 5  AGENT CARDS  - the AI agent card grid
+     SECTION 6  [legacy chat popup - markup removed, kept as reference]
+     SECTION 7  CONFIG       - config panel styling
+     SECTION 8  CHAT WINDOW  - reusable pop-out chat engine (NEW)
+   ================================================================ */
+
+
+/* ==========================================
+   ===  SECTION 1: BASE (tokens, reset, typography)
+   ========================================== */
+
+:root {
+    /* Colors */
+    --color-primary: #075985;        /* main blue (buttons, links) */
+    --color-primary-dark: #064e78;   /* hover state for primary */
+    --color-sidebar: #064f86;        /* sidebar background */
+    --color-background: #f5f7f9;     /* page background */
+    --color-surface: #ffffff;        /* cards / panels */
+    --color-surface-alt: #fafafa;    /* composer strip */
+    --color-text: #263238;           /* headings */
+    --color-text-soft: #374151;      /* body text */
+    --color-text-muted: #64748b;     /* secondary text */
+    --color-text-faint: #9ca3af;     /* timestamps */
+    --color-border: #e1e5e8;
+    --color-border-strong: #cbd5e1;
+    --color-accent: #dbeafe;         /* light blue highlight */
+    --color-danger: #b91c1c;         /* delete actions */
+    --color-success: #16803c;        /* online dot */
+
+    /* Layout sizes */
+    --content-max-width: 850px;
+
+    /* Corner rounding */
+    --radius-small: 5px;
+    --radius-medium: 8px;
+
+    /* Shadows */
+    --shadow-panel: 0 1px 3px rgba(15, 23, 42, 0.08);
+    --shadow-modal: 0 10px 40px rgba(15, 23, 42, 0.25);
+}
+
+/* RESET */
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* TYPOGRAPHY */
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--color-background);
+    color: var(--color-text);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+    line-height: 1.25;
+}
+
+a {
+    color: var(--color-primary);
+}
+
+code {
+    padding: 2px 5px;
+    border-radius: var(--radius-small);
+    background: #eef2f6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+}
+
+
+/* ==========================================
+   ===  SECTION 2: LAYOUT (app shell, page)
+   ========================================== */
+
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 100vh;
+    background: var(--color-surface);
+}
+
+.page {
+    flex: 1 1 auto;
+    padding: clamp(20px, 4vw, 40px);
+}
+
+.page-header {
+    max-width: 900px;
+    margin-bottom: 25px;
+}
+
+.page-header h1 {
+    margin: 0 0 6px;
+    font-size: clamp(21px, 2.4vw, 27px);
+}
+
+.page-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 15px;
+}
+
+/* Utility */
+.hidden {
+    display: none !important;
+}
+
+
+/* ==========================================
+   ===  SECTION 3: COMPONENTS (buttons, forms, cards, badges)
+   ========================================== */
+
+/* BUTTONS */
+.btn {
+    border: 1px solid transparent;
+    border-radius: var(--radius-small);
+    padding: 9px 16px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+}
+
+.btn-secondary {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-text-soft);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.btn-danger {
+    border-color: #f3c1c1;
+    background: #fff5f5;
+    color: var(--color-danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #fde8e8;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+/* FORM FIELDS */
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--color-text-soft);
+}
+
+.field select,
+.field input,
+.field textarea {
+    width: 100%;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 9px 12px;
+    font: inherit;
+    outline: none;
+    background: #fff;
+}
+
+.field select:focus,
+.field input:focus,
+.field textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+/* CARDS AND PANELS */
+.panel {
+    max-width: 900px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    padding: 20px;
+    margin-bottom: 18px;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    padding: 18px;
+}
+
+.card h3 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.card p {
+    margin: 0;
+    flex: 1 1 auto;
+    color: var(--color-text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* BADGES */
+.badge {
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 3px 10px;
+    background: var(--color-accent);
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* EMPTY STATES & STATUS MESSAGES */
+.empty-state {
+    max-width: 900px;
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-medium);
+    padding: 40px 25px;
+    text-align: center;
+    color: var(--color-text-muted);
+}
+
+.status-message {
+    margin-top: 12px;
+    font-size: 14px;
+    min-height: 20px;
+}
+
+.status-message.ok     { color: var(--color-success); }
+.status-message.error  { color: var(--color-danger); }
+
+.section-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.section-note {
+    margin-left: auto;
+    font-size: 13px;
+}
+
+
+/* ==========================================
+   ===  SECTION 4: READOUT (markdown bubbles / code / lists)
+   ========================================== */
+/* Shared rendering classes used inside chat bubbles and anywhere
+   message text is displayed. Safe DOM built by ui/markdown.js. */
+
+.readout {
+    color: var(--color-text-soft);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.readout p {
+    margin: 0 0 10px;
+}
+
+.readout p:last-child {
+    margin-bottom: 0;
+}
+
+.readout pre {
+    margin: 0 0 10px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+.readout pre code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+}
+
+.readout code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #eef2f6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+}
+
+.readout ul,
+.readout ol {
+    margin: 0 0 10px;
+    padding-left: 22px;
+}
+
+
+/* ==========================================
+   ===  SECTION 5: AGENT CARDS
+   ========================================== */
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    max-width: 1000px;
+}
+
+.agent-card-action {
+    margin-top: auto;
+}
+
+
+/* ==========================================
+   ===  SECTION 6: CHAT POPUP (floating chat window)
+   ========================================== */
+
+.chat-popup {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    width: min(420px, calc(100vw - 24px));
+    height: min(560px, calc(100vh - 48px));
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-modal);
+    overflow: hidden;
+}
+
+/* A launching button shown when the popup is closed (bottom-right). */
+.chat-launcher {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 60;
+}
+
+/* Header */
+.chat-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+.chat-header .avatar {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    font-size: 14px;
+}
+
+.chat-header-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.chat-header-info strong {
+    overflow: hidden;
+    font-size: 15px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.chat-header-info small {
+    color: var(--color-text-muted);
+    font-size: 12px;
+}
+
+.chat-header-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-header-actions button {
+    border: 0;
+    border-radius: var(--radius-small);
+    padding: 6px 10px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chat-header-actions button:hover {
+    background: #e2e8f0;
+    color: var(--color-primary);
+}
+
+.chat-header-actions button.danger:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+/* Scrolling bubbles */
+.chat-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--color-background);
+}
+
+.chat-welcome {
+    margin: auto;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 14px;
+}
+
+/* One bubble: a row [avatar | content] mirroring the old message layout */
+.bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 100%;
+}
+
+.bubble.user {
+    align-self: flex-end;
+    padding-left: clamp(0px, 6vw, 40px);
+}
+
+.bubble.agent {
+    align-self: flex-start;
+    padding-left: 4px;
+}
+
+.bubble-content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.bubble-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.bubble-header strong {
+    font-size: 13px;
+}
+
+.bubble-header span {
+    color: var(--color-text-faint);
+    font-size: 11px;
+}
+
+.bubble-body {
+    border-radius: var(--radius-medium);
+    padding: 10px 12px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    font-size: 14px;
+}
+
+.bubble.agent .bubble-body {
+    border-left: 3px solid var(--color-accent);
+    background: var(--color-surface);
+}
+
+.bubble.user .bubble-body {
+    background: #eaf3fc;
+}
+
+/* Avatar */
+.avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #374151;
+    font-weight: 700;
+}
+
+.avatar.agent-avatar {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+/* Typing indicator (pulsing dots) */
+.typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-text-faint);
+    animation: typing-pulse 1.2s infinite ease-in-out;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing-pulse {
+    0%, 60%, 100% { opacity: 0.25; }
+    30%           { opacity: 1; }
+}
+
+/* Input area */
+.chat-input-area {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+#chat-message-input {
+    display: block;
+    width: 100%;
+    min-height: 60px;
+    max-height: 160px;
+    resize: vertical;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 10px 12px;
+    outline: none;
+    font: inherit;
+    line-height: 1.5;
+}
+
+#chat-message-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.chat-input-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.chat-input-hint {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+.chat-save-status {
+    font-size: 12px;
+    min-height: 16px;
+}
+
+#chat-send-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+
+/* ==========================================
+   ===  SECTION 7: CONFIG panel
+   ========================================== */
+
+.config-note {
+    color: var(--color-text-muted);
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+
+/* ==========================================
+   ===  RESPONSIVE (mobile)
+   ========================================== */
+
+@media (max-width: 600px) {
+    .page {
+        padding: 18px 14px;
+    }
+
+    .chat-window-launcher {
+        right: 12px;
+        bottom: 12px;
+    }
+}
+
+
+/* ==========================================
+   ===  SECTION 8: CHAT WINDOW ENGINE (reusable pop-out chat)
+   ========================================== */
+/* Styles for js/classes/chat-window.js - the configuration-driven,
+   pop-out chat window. Class names are prefixed `cw-` (plus the root
+   `.chat-window`) so this component never collides with app styles.
+   This replaces the older static chat-popup markup that lived in
+   SECTION 6. A launcher button is created by the component, so no
+   chat markup is required in the page HTML. */
+
+:root {
+    /* CHAT WINDOW ENGINE tokens (map onto the app palette by default) */
+    --cw-bg: var(--color-surface);
+    --cw-header-bg: var(--color-surface-alt);
+    --cw-border: var(--color-border);
+    --cw-border-strong: var(--color-border-strong);
+    --cw-chat-bg: var(--color-background);
+    --cw-panel-bg: var(--color-surface);
+    --cw-text-muted: var(--color-text-muted);
+    --cw-user-bg: #eaf3fc;
+    --cw-accent: var(--color-primary);
+    --cw-header-height: 50px;
+    --cw-z-index: 9000;
+}
+
+.cw-hidden {
+    display: none !important;
+}
+
+/* ---------- the floating window ---------- */
+
+.chat-window {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: var(--cw-z-index);
+    display: flex;
+    flex-direction: column;
+    width: 780px;
+    max-width: calc(100vw - 16px);
+    height: 560px;
+    max-height: calc(100vh - 16px);
+    min-width: 360px;
+    min-height: 460px;
+    border: 1px solid var(--cw-border);
+    border-radius: 14px;
+    background: var(--cw-bg);
+    box-shadow: var(--shadow-modal);
+    overflow: hidden;
+    font: inherit;
+}
+
+.chat-window.cw-dragging {
+    cursor: grabbing;
+    user-select: none;
+}
+
+/* ---------- header (also the drag handle) ---------- */
+
+.cw-window-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 12px;
+    height: var(--cw-header-height);
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--cw-border);
+    background: var(--cw-header-bg);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+.chat-window.cw-dragging .cw-window-header {
+    cursor: grabbing;
+}
+
+.cw-window-avatar {
+    display: flex;
+    flex: 0 0 32px;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+}
+
+.cw-window-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.cw-window-info strong {
+    overflow: hidden;
+    font-size: 15px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.cw-window-info small {
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.cw-window-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.cw-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-small);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+
+.cw-icon-btn:hover {
+    background: #e2e8f0;
+    color: var(--color-primary);
+}
+
+.cw-icon-btn.cw-close:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+/* ---------- body: chat area + right panel ---------- */
+
+.cw-window-body {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.cw-chat-area {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.cw-message-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--cw-chat-bg);
+}
+
+/* ---------- bubbles ---------- */
+
+.cw-bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 100%;
+}
+
+.cw-bubble.cw-user {
+    align-self: flex-end;
+    padding-left: clamp(0px, 6vw, 40px);
+}
+
+.cw-bubble.cw-assistant,
+.cw-bubble.cw-agent {
+    align-self: flex-start;
+    padding-left: 4px;
+}
+
+.cw-bubble-content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.cw-bubble-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.cw-bubble-header strong {
+    font-size: 13px;
+}
+
+.cw-bubble-header span {
+    color: var(--color-text-faint);
+    font-size: 11px;
+}
+
+.cw-bubble-body {
+    border-radius: var(--radius-medium);
+    padding: 10px 12px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    font-size: 14px;
+}
+
+.cw-bubble.cw-user .cw-bubble-body {
+    background: var(--cw-user-bg);
+}
+
+.cw-bubble.cw-agent .cw-bubble-body {
+    border-left: 3px solid var(--cw-accent);
+}
+
+.cw-bubble.cw-system {
+    align-self: center;
+    max-width: 80%;
+}
+
+.cw-bubble.cw-system .cw-bubble-header {
+    display: none;
+}
+
+.cw-bubble.cw-system .cw-bubble-body {
+    padding: 6px 12px;
+    border: 1px dashed var(--cw-border-strong);
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    font-style: italic;
+    text-align: center;
+}
+
+.cw-bubble-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #374151;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.cw-bubble-avatar.cw-agent-avatar {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+/* ---------- welcome / typing ---------- */
+
+.cw-welcome {
+    margin: auto;
+    max-width: 320px;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 14px;
+}
+
+.cw-welcome h3 {
+    margin: 0 0 6px;
+    color: var(--color-text);
+    font-size: 17px;
+}
+
+.cw-welcome p {
+    margin: 0;
+}
+
+.cw-typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.cw-typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-text-faint);
+    animation: cw-typing-pulse 1.2s infinite ease-in-out;
+}
+
+.cw-typing span:nth-child(2) { animation-delay: 0.15s; }
+.cw-typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes cw-typing-pulse {
+    0%, 60%, 100% { opacity: 0.25; }
+    30%           { opacity: 1; }
+}
+
+/* ---------- right panel ---------- */
+
+.cw-panel {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    width: 300px;
+    border-left: 1px solid var(--cw-border);
+    background: var(--cw-panel-bg);
+}
+
+.cw-panel.cw-panel-hidden {
+    display: none;
+}
+
+.cw-panel-sections {
+    flex: 1 1 auto;
+    padding: 14px 16px 20px;
+    overflow-y: auto;
+}
+
+.cw-panel-drag {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    width: 8px;
+    z-index: 2;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.cw-panel-drag:hover {
+    background: rgba(7, 89, 133, 0.15);
+}
+
+.cw-panel-section {
+    margin-bottom: 14px;
+}
+
+.cw-panel-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--cw-border);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.cw-panel-section-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+}
+
+.cw-panel-section-toggle svg {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--color-text-faint);
+    transition: transform 0.15s ease;
+}
+
+.cw-panel-section.cw-collapsed .cw-panel-section-toggle svg {
+    transform: rotate(-90deg);
+}
+
+.cw-panel-section-body {
+    padding-top: 8px;
+}
+
+.cw-panel-section.cw-collapsed .cw-panel-section-body {
+    display: none;
+}
+
+/* panel fields */
+
+.cw-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: var(--color-text-soft);
+}
+
+.cw-field-label {
+    font-size: 12px;
+    color: var(--color-text-muted);
+}
+
+.cw-field-value {
+    padding: 6px 8px;
+    border: 1px solid var(--cw-border);
+    border-radius: var(--radius-small);
+    background: var(--color-surface-alt);
+    font-size: 13px;
+    color: var(--color-text-soft);
+}
+
+.cw-field input[type="text"],
+.cw-field select {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: #fff;
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+}
+
+.cw-field input:focus,
+.cw-field select:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.cw-field.cw-field-toggle {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.cw-switch {
+    position: relative;
+    flex: 0 0 auto;
+    width: 38px;
+    height: 22px;
+}
+
+.cw-switch input {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.cw-switch-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: #cbd5e1;
+    transition: background 0.15s ease;
+    pointer-events: none;
+}
+
+.cw-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition: transform 0.15s ease;
+}
+
+.cw-switch input:checked + .cw-switch-track {
+    background: var(--color-primary);
+}
+
+.cw-switch input:checked + .cw-switch-track::after {
+    transform: translateX(16px);
+}
+
+.cw-divider {
+    margin: 12px 0;
+    border: 0;
+    border-top: 1px solid var(--cw-border);
+}
+
+.cw-panel-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: var(--color-surface);
+    color: var(--color-text-soft);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.cw-panel-button:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.cw-panel-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ---------- composer ---------- */
+
+.cw-composer {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--cw-border);
+    background: var(--color-surface-alt);
+}
+
+.cw-save-status {
+    min-height: 16px;
+    font-size: 12px;
+}
+
+.cw-save-status.ok { color: var(--color-success); }
+.cw-save-status.error { color: var(--color-danger); }
+
+.cw-input {
+    display: block;
+    width: 100%;
+    min-height: 40px;
+    max-height: 160px;
+    padding: 9px 12px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: #fff;
+    resize: none;
+    overflow-y: auto;
+    outline: none;
+    font: inherit;
+    line-height: 1.5;
+}
+
+.cw-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.cw-input:disabled {
+    opacity: 0.6;
+}
+
+.cw-composer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.cw-input-hint {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+/* ---------- launcher + resize handles ---------- */
+
+.chat-window-launcher {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: var(--cw-z-index);
+    box-shadow: var(--shadow-modal);
+}
+
+.cw-resize {
+    position: absolute;
+    z-index: 3;
+}
+
+.cw-resize-n { top: -3px; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+.cw-resize-s { bottom: -3px; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+.cw-resize-e { top: 8px; right: -3px; bottom: 8px; width: 8px; cursor: e-resize; }
+.cw-resize-w { top: 8px; left: -3px; bottom: 8px; width: 8px; cursor: w-resize; }
+.cw-resize-ne { top: -3px; right: -3px; width: 12px; height: 12px; cursor: ne-resize; }
+.cw-resize-nw { top: -3px; left: -3px; width: 12px; height: 12px; cursor: nw-resize; }
+.cw-resize-se { right: -3px; bottom: -3px; width: 12px; height: 12px; cursor: se-resize; }
+.cw-resize-sw { left: -3px; bottom: -3px; width: 12px; height: 12px; cursor: sw-resize; }
+
+/* ---------- flyout widget (persistent corner chat) ---------- */
+
+/* The widget root is always anchored bottom-right. In its collapsed
+   (resting) state it only shows the corner launcher button; in the
+   expanded state the full chat panel "flies out" upward from it. */
+.chat-window.cw-widget {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    left: auto;
+    top: auto;
+    z-index: var(--cw-z-index);
+    display: flex;
+    flex-direction: column;
+    width: 380px;
+    height: 560px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    min-width: 300px;
+    min-height: 380px;
+    border: 1px solid var(--cw-border);
+    border-radius: 16px;
+    background: var(--cw-bg);
+    box-shadow: var(--shadow-modal);
+    overflow: hidden;
+    transform-origin: bottom right;
+    transition: transform 0.25s ease, opacity 0.22s ease;
+}
+
+/* Collapsed = just the round launcher bubble. Hide the inner panel. */
+.chat-window.cw-widget.cw-collapsed {
+    width: 60px;
+    height: 60px;
+    min-width: 0;
+    min-height: 0;
+    border-radius: 50%;
+    transform: translateY(12px);
+    opacity: 0.94;
+    cursor: pointer;
+}
+
+.chat-window.cw-widget.cw-collapsed .cw-window-header,
+.chat-window.cw-widget.cw-collapsed .cw-window-body,
+.chat-window.cw-widget.cw-collapsed .cw-composer {
+    display: none;
+}
+
+.chat-window.cw-widget.cw-collapsed:hover {
+    transform: translateY(8px);
+    opacity: 1;
+}
+
+/* Expanded = full chat panel flies out. */
+.chat-window.cw-widget.cw-expanded {
+    transform: translateY(0);
+    opacity: 1;
+    cursor: default;
+}
+
+/* The persistent corner button (shown only while collapsed). */
+.cw-widget-launcher {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+    color: #fff;
+    cursor: pointer;
+    box-shadow: var(--shadow-modal);
+}
+
+.cw-widget-launcher:hover {
+    filter: brightness(1.08);
+}
+
+/* When expanded, hide the header-drag cursor (widget is not draggable)
+   and hide the collapsed launcher. */
+.chat-window.cw-widget.cw-expanded .cw-widget-launcher {
+    display: none;
+}
+
+.chat-window.cw-widget .cw-window-header {
+    cursor: default;
+}
+
+/* Agent switcher dropdown in the flyout header. */
+.cw-agent-select {
+    flex: 0 1 auto;
+    max-width: 140px;
+    padding: 5px 8px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: #fff;
+    font: inherit;
+    font-size: 12px;
+    outline: none;
+}
+
+.cw-agent-select:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+/* ---------- minimized state ---------- */
+
+.chat-window.cw-minimized .cw-window-body,
+.chat-window.cw-minimized .cw-composer {
+    display: none;
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 600px) {
+    .chat-window {
+        right: 8px !important;
+        bottom: 8px !important;
+        left: 8px !important;
+        top: 8px !important;
+        width: auto !important;
+        height: auto !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        max-width: none !important;
+        max-height: none !important;
+    }
+
+    .chat-window.cw-widget.cw-collapsed {
+        left: auto !important;
+        top: auto !important;
+        right: 14px !important;
+        bottom: 14px !important;
+        width: 60px !important;
+        height: 60px !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        max-width: none !important;
+        max-height: none !important;
+    }
+
+    .chat-window.cw-widget.cw-expanded {
+        left: 8px !important;
+        top: 8px !important;
+        right: 8px !important;
+        bottom: 8px !important;
+        width: auto !important;
+        height: auto !important;
+    }
+}
+
+
+---------------------------------------------------------------------------

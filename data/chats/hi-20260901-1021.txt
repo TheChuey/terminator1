@@ -1,0 +1,35 @@
+================================================================
+Session: hi
+Agent:   Basic Chat Agent
+Model:   gemma4:e2b
+Date:    Sep 1, 2026, 10:21 AM
+Interactions between LLM and user: 3
+================================================================
+
+[You]  Sep 1, 2026, 10:20 AM
+----------------------------------------------------------------
+hi
+
+[Basic Chat Agent]  Sep 1, 2026, 10:20 AM
+----------------------------------------------------------------
+Hello! How can I help you today?
+
+[You]  Sep 1, 2026, 10:21 AM
+----------------------------------------------------------------
+recall all of the chat contents
+
+[Basic Chat Agent]  Sep 1, 2026, 10:21 AM
+----------------------------------------------------------------
+Here is the content of our chat so far:
+
+**User:** hi
+**Model:** Hello! How can I help you?
+**User:** recall all of the chat contents
+
+[You]  Sep 1, 2026, 10:21 AM
+----------------------------------------------------------------
+who is the user
+
+[Basic Chat Agent]  Sep 1, 2026, 10:21 AM
+----------------------------------------------------------------
+You are the person interacting with me, the AI assistant. I do not have access to your personal identity.

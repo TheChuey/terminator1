@@ -1,0 +1,15 @@
+================================================================
+Session: hello
+Agent:   Basic Chat Agent
+Model:   (server default)
+Date:    Sep 1, 2026, 10:20 AM
+Interactions between LLM and user: 1
+================================================================
+
+[You]  Sep 1, 2026, 10:20 AM
+----------------------------------------------------------------
+hello
+
+[Basic Chat Agent]  Sep 1, 2026, 10:20 AM
+----------------------------------------------------------------
+Hello! How can I assist you today?

@@ -1,0 +1,16 @@
+{
+  "models": [
+    {
+      "id": "qwen2.5-coder:latest",
+      "name": "qwen2.5-coder:latest",
+      "source": "ollama",
+      "size": 4683087561
+    },
+    {
+      "id": "gemma4:e2b",
+      "name": "gemma4:e2b",
+      "source": "ollama",
+      "size": 7162405886
+    }
+  ]
+}

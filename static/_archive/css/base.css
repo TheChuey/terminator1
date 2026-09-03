@@ -1,0 +1,99 @@
+/* ==========================================
+   BASE.CSS
+   WHAT THIS FILE DOES:
+   - Defines the color / spacing "variables" used by every other CSS file.
+   - Resets default browser styling so all pages look the same.
+   - Sets the base font and text colors.
+
+   Load order matters: this file loads FIRST, then layout.css,
+   then components.css, then thread.css.
+========================================== */
+
+
+/* ------------------------------------------
+   DESIGN VARIABLES
+   Change a value here and the whole app updates.
+   Usage anywhere else:  color: var(--color-primary);
+------------------------------------------ */
+
+:root {
+    /* Colors */
+    --color-primary: #075985;        /* main blue (buttons, links) */
+    --color-primary-dark: #064e78;   /* hover state for primary */
+    --color-sidebar: #064f86;        /* sidebar background */
+    --color-background: #f5f7f9;     /* page background */
+    --color-surface: #ffffff;        /* cards / panels */
+    --color-surface-alt: #fafafa;    /* composer strip */
+    --color-text: #263238;           /* headings */
+    --color-text-soft: #374151;      /* body text */
+    --color-text-muted: #64748b;     /* secondary text */
+    --color-text-faint: #9ca3af;     /* timestamps */
+    --color-border: #e1e5e8;
+    --color-border-strong: #cbd5e1;
+    --color-accent: #dbeafe;         /* light blue highlight */
+    --color-danger: #b91c1c;         /* delete actions */
+    --color-success: #16803c;        /* online dot */
+
+    /* Layout sizes */
+    --sidebar-width: 220px;
+    --sidebar-collapsed-width: 70px;
+    --content-max-width: 850px;
+
+    /* Corner rounding */
+    --radius-small: 5px;
+    --radius-medium: 8px;
+
+    /* Shadows */
+    --shadow-panel: 0 1px 3px rgba(15, 23, 42, 0.08);
+    --shadow-modal: 0 10px 40px rgba(15, 23, 42, 0.25);
+}
+
+
+/* ------------------------------------------
+   RESET
+   Removes the browser's built-in margins/padding
+   so WE decide the spacing everywhere.
+------------------------------------------ */
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+
+/* ------------------------------------------
+   TYPOGRAPHY
+------------------------------------------ */
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--color-background);
+    color: var(--color-text);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+    line-height: 1.25;
+}
+
+a {
+    color: var(--color-primary);
+}
+
+code {
+    padding: 2px 5px;
+    border-radius: var(--radius-small);
+    background: #eef2f6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+}

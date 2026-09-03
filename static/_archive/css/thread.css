@@ -1,0 +1,492 @@
+/* ==========================================
+   THREAD.CSS
+   WHAT THIS FILE DOES:
+   - Styles everything specific to the CHAT page:
+       the scrolling message thread
+       one message (avatar + header + body + action buttons)
+       nested replies (threaded discussions)
+       "typing..." indicator
+       the composer (textarea + Attach / Send)
+       reply-context banner
+       AI Wizard step pills
+
+   The chat page is a flex column:
+       [agent-header] [thread - grows and scrolls] [reply-area]
+========================================== */
+
+
+/* ------------------------------------------
+   THREAD  (scrolling message list)
+------------------------------------------ */
+
+.thread {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;               /* lets it shrink so overflow scrolls */
+    width: 100%;
+    padding: clamp(20px, 4vw, 40px);
+    overflow-y: auto;
+}
+
+.thread-welcome {
+    width: min(100%, var(--content-max-width));
+    margin: auto;                /* centers vertically when thread is empty */
+    text-align: center;
+    color: var(--color-text-muted);
+}
+
+.thread-welcome h2 {
+    color: var(--color-text);
+    margin-bottom: 8px;
+}
+
+
+/* ------------------------------------------
+   ONE MESSAGE
+   Flex row: [avatar] [message-content]
+------------------------------------------ */
+
+.message {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 15px;
+    width: min(100%, var(--content-max-width));
+    margin-bottom: 30px;
+}
+
+.message-content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.user-message {
+    align-self: flex-end;
+    padding-left: clamp(0px, 4vw, 30px);
+}
+
+.agent-message {
+    align-self: flex-start;
+    padding-left: 20px;
+    border-left: 3px solid var(--color-accent);
+}
+
+
+/* ------------------------------------------
+   AVATARS
+------------------------------------------ */
+
+.avatar {
+    display: flex;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #374151;
+    font-weight: 700;
+}
+
+.agent-avatar {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.large {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+}
+
+
+/* ------------------------------------------
+   MESSAGE CONTENT
+   Header = name + time. Body = the text.
+------------------------------------------ */
+
+.message-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.message-header strong {
+    font-size: 15px;
+}
+
+.message-header span {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+.edited-tag {
+    font-style: italic;
+}
+
+.message-body {
+    color: var(--color-text-soft);
+    line-height: 1.6;
+    overflow-wrap: anywhere;     /* long links wrap instead of overflowing */
+}
+
+.message-body p {
+    margin: 0 0 10px;
+}
+
+.message-body p:last-child {
+    margin-bottom: 0;
+}
+
+/* Code blocks inside a chat bubble (rendered by ui/markdown.js).
+   Mirrors .response-body pre from board.css so both pages match. */
+.message-body pre {
+    margin: 0 0 10px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+.message-body pre code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+}
+
+/* Lists inside a chat bubble */
+.message-body ul,
+.message-body ol {
+    margin: 0 0 10px;
+    padding-left: 22px;
+}
+
+.message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.message-actions button {
+    border: 0;
+    padding: 4px 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.message-actions button:hover {
+    color: var(--color-primary);
+}
+
+.message-actions button.danger:hover {
+    color: var(--color-danger);
+}
+
+
+/* ------------------------------------------
+   NESTED REPLIES (threaded discussions)
+   Replies to a message render inside this box,
+   indented under their parent.
+------------------------------------------ */
+
+.message-replies {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-top: 22px;
+    padding-left: 18px;
+    border-left: 2px solid var(--color-border);
+}
+
+
+/* Inline edit box that replaces the text while editing */
+.inline-edit textarea {
+    display: block;
+    width: 100%;
+    min-height: 70px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 10px;
+    font: inherit;
+    outline: none;
+    resize: vertical;
+}
+
+.inline-edit textarea:focus {
+    border-color: var(--color-primary);
+}
+
+.inline-edit-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+
+/* ------------------------------------------
+   TYPING INDICATOR ("agent is thinking")
+   Three dots that pulse using a CSS animation.
+------------------------------------------ */
+
+.typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-text-faint);
+    animation: typing-pulse 1.2s infinite ease-in-out;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing-pulse {
+    0%, 60%, 100% { opacity: 0.25; }
+    30%           { opacity: 1; }
+}
+
+
+/* ------------------------------------------
+   COMPOSER (reply area at the bottom)
+------------------------------------------ */
+
+.reply-area {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    padding: 16px clamp(18px, 4vw, 35px);
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+#message-input {
+    display: block;
+    width: 100%;
+    min-height: 100px;
+    max-height: 260px;
+    resize: vertical;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 12px;
+    outline: none;
+    font: inherit;
+    line-height: 1.5;
+}
+
+#message-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.reply-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.reply-hint {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+
+/* Banner shown above the input while replying to a message */
+.reply-context {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--color-accent);
+    border-left: 4px solid var(--color-primary);
+    border-radius: var(--radius-small);
+    background: #eff6ff;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--color-text-soft);
+}
+
+.reply-context strong {
+    overflow: hidden;
+    max-width: 320px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.reply-cancel {
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: var(--color-danger);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+
+/* ------------------------------------------
+   AI WIZARD STEP PILLS
+   Small numbered indicators inside the modal.
+------------------------------------------ */
+
+.wizard-steps {
+    display: flex;
+    gap: 8px;
+    padding: 14px 20px 0;
+}
+
+.wizard-step-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 4px 12px;
+    background: #eef2f6;
+    color: var(--color-text-muted);
+    font-size: 12px;
+}
+
+.wizard-step-pill.current {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.wizard-step-pill.done {
+    background: var(--color-accent);
+    color: var(--color-primary);
+}
+
+.wizard-task-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 10px;
+}
+
+.wizard-task-button {
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-medium);
+    background: #fff;
+    padding: 14px;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.wizard-task-button:hover {
+    border-color: var(--color-primary);
+}
+
+.wizard-task-button.selected {
+    border-color: var(--color-primary);
+    background: #eff6ff;
+}
+
+.wizard-task-button strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+
+.wizard-task-button span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+}
+
+.wizard-preview {
+    width: 100%;
+    min-height: 180px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 12px;
+    font: inherit;
+    line-height: 1.55;
+    outline: none;
+    resize: vertical;
+}
+
+.wizard-preview:focus {
+    border-color: var(--color-primary);
+}
+
+
+/* ------------------------------------------
+   TABLET / MOBILE tweaks for the chat page only
+   (general responsive rules live in layout.css)
+------------------------------------------ */
+
+@media (max-width: 800px) {
+
+    .thread {
+        padding: 22px;
+    }
+
+    .message {
+        width: 100%;
+    }
+
+    .user-message {
+        padding-left: 10px;
+    }
+}
+
+@media (max-width: 600px) {
+
+    .thread {
+        padding: 18px 14px;
+    }
+
+    .message {
+        gap: 10px;
+        margin-bottom: 22px;
+    }
+
+    .avatar {
+        flex-basis: 34px;
+        width: 34px;
+        height: 34px;
+        font-size: 12px;
+    }
+
+    .large {
+        flex-basis: 36px;
+        width: 36px;
+        height: 36px;
+    }
+
+    .agent-message {
+        padding-left: 10px;
+    }
+
+    .user-message {
+        padding-left: 0;
+    }
+
+    .reply-area {
+        padding: 12px;
+    }
+
+    #message-input {
+        min-height: 80px;
+    }
+
+    .message-replies {
+        padding-left: 10px;
+    }
+}

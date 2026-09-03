@@ -1,0 +1,5702 @@
+===========================================================================
+THE ENTIRE ENCHILADA V1
+terminator1 (AI Agent Laboratory) - Complete Application Reference
+===========================================================================
+
+This file contains the ENTIRE application in one document:
+  1. Folder structure
+  2. Architecture explanation
+  3. Module inventory
+  4. Key class explanations
+  5. Complete source code of every file
+
+Any person or AI can read this file to fully understand the application.
+
+This is V1 of the enchilada, describing the CURRENT application (terminator1
+/ "AI Agent Laboratory"). It documents the live app only: the backend, the
+agent library, the config, and the active frontend. It deliberately omits
+the archived frontend (static/_archive/) and runtime data (saved chats in
+data/chats/, discussions) so the reader sees one coherent, current system.
+
+
+===========================================================================
+SECTION 1: FOLDER STRUCTURE
+===========================================================================
+
+terminator1/
+|
+|-- server.py                          # FastAPI entry point (all HTTP endpoints)
+|-- requirements.txt                   # Python dependencies
+|-- README.md                          # Project documentation
+|-- CREATING_AGENTS.md                 # How to author new agents
+|
+|-- app/                               # Core application logic (Python)
+|   |-- core/
+|   |   |-- agent.py                   # AgentProfile + reusable Agent (think/act/observe)
+|   |   |-- llm.py                     # ask_llm, model resolution, context, Ollama scan
+|   |   |-- prompt.py                  # PromptManager: sections + tools -> system prompt
+|   |-- agents/
+|   |   |-- loader.py                  # find/read/parse agent_library/{id}/agent.md+json
+|   |   |-- registry.py                # scan agent_library/ -> available agents
+|   |   |-- factory.py                 # build_agent(agent_id, model) -> ready Agent
+|   |-- tools/
+|   |   |-- registry.py                # TOOL_REGISTRY: tool IDs -> Python functions
+|   |   |-- files.py                   # read_file, write_file, read_pdf
+|   |   |-- workspace.py               # create_folder, create_file, setup_venv
+|   |   |-- datetime_tools.py          # get_current_date, tell_me_the_date_and_time
+|   |   |-- search.py                  # (future search tools - placeholder)
+|   |   |-- web.py                     # (future web tools - placeholder)
+|
+|-- agent_library/                     # THE AGENTS - filesystem is the source of truth
+|   |-- basic_chat/                    # mode: chat, no tools
+|   |   |-- agent.json
+|   |   |-- agent.md
+|   |-- basic_chat_agent/              # mode: agent, 3 tools
+|   |   |-- agent.json
+|   |   |-- agent.md
+|   |-- dev_assistant/                 # mode: agent, all 8 tools
+|       |-- agent.json
+|       |-- agent.md
+|
+|-- config/
+|   |-- models.json                    # AUTO-GENERATED at startup (Ollama scan)
+|   |-- settings.json                  # {"default_agent": "basic_chat"}
+|
+|-- data/                              # Frontend-owned data written by the server
+|   |-- discussions.json               # # (example data file)
+|   |-- chats/                         # saved .txt chat transcripts (example)
+|
+|-- static/                            # Frontend (served by FastAPI)
+|   |-- index.html                     # Single-page app shell (one module script)
+|   |-- config/
+|   |   |-- app_settings.json          # stored browser defaults (server-owned)
+|   |-- css/
+|   |   |-- styles.css                 # ONE stylesheet - every style for the app
+|   |-- js/
+|       |-- app.js                     # ENTRY POINT - boot + send/save wiring
+|       |-- api/
+|       |   |-- api.js                 # THE ONLY file that talks to the server
+|       |-- classes/
+|       |   |-- ChatSession.js         # chat data model (no DOM)
+|       |   |-- chat-window.js         # reusable pop-out chat window engine
+|       |-- logic/
+|       |   |-- models.js              # data shapes + pure helpers (ids, history)
+|       |   |-- chat-formatter.js      # build the .txt chat transcript
+|       |-- ui/
+|           |-- agents.js              # the AI agent card grid
+|           |-- config.js              # the config / settings panel
+|           |-- config-form.js         # config form builder (defaults + save path)
+|           |-- markdown.js            # chat text -> safe markdown DOM
+|
+|-- the_entire_enchilada_v1.txt        # This file
+
+
+===========================================================================
+SECTION 2: ARCHITECTURE EXPLANATION
+===========================================================================
+
+WHAT THIS APP IS:
+  A local lab for building and testing AI agents: a single-process web app
+  (FastAPI backend + vanilla JS frontend) that talks to local Ollama LLMs.
+  It is an AI chatbot system with tools.
+
+CORE IDEA:
+    Agent      = one reusable Python runtime (think / act / observe)
+    Markdown   = behavior        (agent_library/*/agent.md)
+    JSON       = configuration   (agent_library/*/agent.json)
+    Tools      = capabilities    (app/tools/, wired by ID)
+    Registry   = discovery       (agent_library/ is scanned automatically)
+    Factory    = construction    (agent_id -> ready Agent)
+    Frontend   = selection       (GET /api/agents -> agent selector)
+
+  You can build 10, 20, or 100 agents without ever writing a new Python
+  class: a new agent is just a folder with agent.md + agent.json (+ tool
+  IDs). Agents are discovered automatically.
+
+HOW IT WORKS (THE BIG PICTURE):
+
+  1. THE FILESYSTEM IS THE SOURCE OF TRUTH FOR AGENTS
+     Every folder under agent_library/ that contains an agent.json is an
+     available agent. Dropping a new folder makes it appear in
+     GET /api/agents and the frontend selector on the next restart - no
+     code changes, no manual lists. Each agent has two files:
+       agent.json  - configuration (id, name, mode, model, tools)
+       agent.md    - behavior '## sections' (role, purpose, boundaries, ...)
+
+  2. PIPELINE ON EVERY CHAT REQUEST
+     When a user sends a chat message:
+       a) server.py's /api/chat receives {message, model, agent_id, history}
+       b) factory.build_agent() reads the agent definition (loader.py)
+       c) registry.resolve_tools() maps tool IDs to Python functions
+       d) PromptManager composes the system prompt from sections + tools
+       e) Agent is created fresh (stateless - the frontend owns history)
+       f) history is replayed into agent.messages
+       g) agent.think() sends everything to the LLM and returns the reply
+
+  3. TWO AGENT MODES (same Agent class, different config)
+       chat  - User -> LLM -> Response. No tools attached, so no tool loop.
+       agent - User -> Agent -> LLM -> Tool? -> Observation -> LLM -> Response.
+
+  4. STATELESS SERVER / STATE OWNED BY THE FRONTEND
+     Chat requests are stateless server-side. The frontend keeps its own
+     ChatSession (agent + model + ordered messages) and replays history on
+     every send. The .txt transcript is auto-saved after every reply.
+
+  5. THE AGENT'S TOOL LOOP (agent.py + llm.py)
+     Agent.think() sends the conversation to Ollama. If the LLM returns
+     tool calls, act() runs each tool and observe() records the result,
+     then a follow-up LLM round produces the final reply. Small local
+     models often write tool calls as plain-text JSON in the reply body
+     instead of using Ollama's native tool_calls field - _extract_text_tool_calls()
+     handles both paths.
+
+THE IMPORT GRAPH (who imports whom):
+
+  server.py
+    -> app.core.llm.refresh_models        (startup Ollama scan)
+    -> app.agents.registry.list_agents    (GET /api/agents)
+    -> app.agents.factory.build_agent     (POST /api/chat)
+
+  app/agents/factory.py
+    -> app.agents.loader.load_definition  (agent.json + agent.md)
+    -> app.core.prompt.PromptManager      (sections + tools -> system prompt)
+    -> app.core.agent.Agent
+    -> app.tools.registry.resolve_tools   (IDs -> functions)
+
+  app/tools/registry.py
+    -> app.tools.files                    (read_file, write_file, read_pdf)
+    -> app.tools.workspace                (create_folder, create_file, setup_venv)
+    -> app.tools.datetime_tools           (get_current_date, tell_me_the_date_and_time)
+
+  app/core/agent.py
+    -> app.core.llm.ask_llm
+
+  app/core/llm.py
+    -> ollama
+
+  app/core/prompt.py
+    -> app.core.agent.AgentProfile        (dataclass only)
+
+  app/agents/loader.py
+    -> (stdlib only: json, re, pathlib)
+
+  app/agents/registry.py
+    -> app.agents.loader.AGENT_LIBRARY_DIR
+
+THE FRONTEND (module map):
+
+  index.html
+    -> js/app.js (the only script loaded, as a module)
+
+  js/app.js
+    -> js/ui/agents.js          (render agent cards)
+    -> js/ui/config.js          (render config panel)
+    -> js/classes/ChatSession.js(data model)
+    -> js/classes/chat-window.js(chat engine, via ChatFactory)
+    -> js/ui/markdown.js        (renderMarkdown for bubbles)
+    -> js/api/api.js            (*all* fetch calls)
+
+  js/classes/ChatSession.js
+    -> js/logic/models.js
+    -> js/logic/chat-formatter.js
+
+  js/ui/config.js
+    -> js/ui/config-form.js
+    -> js/api/api.js
+
+RESPONSIBILITY SPLIT (the chat engine):
+  chat-window.js  -> rendering, DOM, layout, drag/resize, events
+  the app (app.js)-> AI calls, session state, persistence, agent logic
+
+
+===========================================================================
+SECTION 3: MODULE INVENTORY
+===========================================================================
+
+--- CORE MODULES ---
+
+server.py
+  Purpose:    FastAPI entry point. All HTTP endpoints, static files, startup
+              Ollama scan (lifespan -> refresh_models()).
+  Endpoints:  GET  /api/models, GET /api/agents, POST /api/chat,
+              GET/POST /api/discussions, DELETE /api/discussions/{id},
+              GET/POST /api/history, DELETE /api/history/{id},
+              GET/POST /api/settings, POST /api/chat-save, POST /api/exports,
+              GET  /, static mount /static
+
+app/core/agent.py
+  Purpose:    The reusable runtime agent. Behavior comes entirely from the
+              AgentProfile and tools it is given.
+  Exports:    AgentProfile (dataclass), Agent (class)
+
+app/core/llm.py
+  Purpose:    The LLM backend talking to Ollama.
+  Exports:    ask_llm, _resolve_model, _get_context_window, scan_models,
+              refresh_models
+
+app/core/prompt.py
+  Purpose:    Turns an agent definition + resolved tools into an AgentProfile
+              with a composed system prompt.
+  Exports:    KNOWN_SECTIONS, PROMPT_SECTIONS, PromptManager (class)
+
+app/agents/loader.py
+  Purpose:    Locates, reads, and parses one agent definition from
+              agent_library/. Does NOT run agents.
+  Exports:    load_definition, AgentNotFoundError, AGENT_LIBRARY_DIR
+
+app/agents/registry.py
+  Purpose:    Automatic agent discovery (filesystem is the source of truth).
+  Exports:    list_agents, get_agent_meta
+
+app/agents/factory.py
+  Purpose:    Constructs runtime Agents from agent definitions.
+  Exports:    build_agent, replay_history, AgentNotFoundError
+
+app/tools/registry.py
+  Purpose:    The single mapping between tool IDs and Python functions.
+  Exports:    TOOL_REGISTRY (dict), resolve_tools, available_tool_ids
+
+app/tools/files.py
+  Purpose:    File tools: read_file, write_file, read_pdf.
+  Exports:    read_file, write_file, read_pdf
+
+app/tools/workspace.py
+  Purpose:    Workspace tools: create_folder, create_file, setup_venv.
+  Exports:    create_folder, create_file, setup_venv
+
+app/tools/datetime_tools.py
+  Purpose:    Date and time tools.
+  Exports:    get_current_date, tell_me_the_date_and_time
+
+app/tools/search.py
+  Purpose:    Placeholder for future search tools.
+app/tools/web.py
+  Purpose:    Placeholder for future web tools.
+
+--- AGENT DEFINITIONS (agent_library/) ---
+  basic_chat/         agent.json + agent.md  (mode: chat, no tools)
+  basic_chat_agent/   agent.json + agent.md  (mode: agent, 3 tools)
+  dev_assistant/      agent.json + agent.md  (mode: agent, all 8 tools)
+
+--- CONFIG ---
+  config/models.json          Auto-generated from the startup Ollama scan.
+  config/settings.json        {"default_agent": "basic_chat"}
+  static/config/app_settings.json  Stored browser defaults (server-owned).
+
+--- FRONTEND ---
+  static/index.html           SPA shell (single module script)
+  static/css/styles.css       ONE stylesheet (8 sections)
+  static/js/app.js            Entry point - boot, send flow, auto-save
+  static/js/api/api.js        The only fetch module
+  static/js/classes/ChatSession.js   Chat data model
+  static/js/classes/chat-window.js   Reusable pop-out chat engine
+  static/js/logic/models.js   Data shapes + pure helpers
+  static/js/logic/chat-formatter.js  .txt transcript builder
+  static/js/ui/agents.js      Agent card grid
+  static/js/ui/config.js      Config panel
+  static/js/ui/config-form.js Config form builder
+  static/js/ui/markdown.js    Safe markdown -> DOM
+
+--- DOCUMENTATION ---
+  README.md                   Project docs
+  CREATING_AGENTS.md          How to author new agents
+
+
+===========================================================================
+SECTION 4: KEY CLASS EXPLANATIONS
+===========================================================================
+
+--- AgentProfile (app/core/agent.py) ---
+
+  A dataclass holding the identity + behavior of one agent.
+  Fields:
+    From agent.json:  id, name, description, mode
+    From agent.md:    role, purpose, personality, boundaries, communication,
+                      principles, decision_style, plus 'extras'
+                      (any other '## section' passes through verbatim)
+    Composed at build: system_prompt
+    priorities:       documentation only (NOT in the system prompt)
+  Note: there is no from_dict() here; PromptManager.build() maps the parsed
+  definition onto the fields directly.
+
+--- PromptManager (app/core/prompt.py) ---
+
+  Builds an AgentProfile from an agent definition and composes the system
+  prompt.
+  Key methods:
+    build(definition, tools)      Map meta + sections onto the profile,
+                                  collect unknown sections as extras,
+                                  compose the system prompt.
+    compose_system_prompt(...)    Build ROLE\\nPURPOSE\\n... blocks from the
+                                  sections, an 'AVAILABLE TOOLS' block from
+                                  tool docstrings, then sorted UPPERCASE
+                                  blocks for any extras.
+    _tool_lines(tools)            '- fnname: first docstring line' lines.
+  Note on sections:
+    KNOWN_SECTIONS = role, purpose, personality, boundaries, communication,
+                     principles, decision_style, priorities
+    PROMPT_SECTIONS excludes 'priorities' (documentation only).
+    Any other section (user, job, greeting, project_notes, ...) becomes a
+    generic UPPERCASE-titled block in the prompt - so new sections need no
+    code changes.
+
+--- Agent (app/core/agent.py) ---
+
+  Generic AI agent: thinks, acts, observes.
+  Constructor: Agent(model, tools, profile)
+  Key methods:
+    think(user_input)           Add user input, ask the LLM; if there are
+                                tool calls (native or text-JSON), run each
+                                via act()/observe(), then a follow-up round.
+    _extract_text_tool_calls()  Find tool calls a model wrote as plain-text
+                                JSON in the reply body (common with small
+                                local models). ONLY names present in
+                                self.tools are returned, so ordinary replies
+                                containing JSON are never executed.
+    act(tool_call)              Run one tool the LLM requested.
+    observe(name, result)       Record a tool result in the history.
+
+--- LLM backend (app/core/llm.py) ---
+
+  ask_llm(messages, model, tools):
+    Model resolution (explicit arg > config/models.json > first Ollama model).
+    Context window lookup (capped at MAX_NUM_CTX = 32768).
+    Retries once on empty reply.
+  scan_models()/refresh_models():
+    List installed Ollama models; write config/models.json (an empty scan
+    leaves the last known good file untouched). Called on startup.
+
+--- loader (app/agents/loader.py) ---
+
+  Locates/reads/parses one agent definition.
+  load_definition(agent_id) -> {"meta": {...agent.json...}, "sections": {...}}
+  _parse_sections()          splits agent.md on '## <name>' (lowercased).
+  _clean_body()              trims blank lines and '---' separators.
+  Raises AgentNotFoundError when the folder or either file is missing.
+
+--- registry (app/agents/registry.py) ---
+
+  list_agents() scans agent_library/ and returns [{id, name, description,
+  mode}, ...]. Folders without a readable agent.json are skipped so a
+  half-created agent cannot break the whole app.
+
+--- TOOL_REGISTRY (app/tools/registry.py) ---
+
+  The single mapping between tool IDs (used in agent.json) and Python
+  functions. resolve_tools() reports missing IDs loudly instead of dropping
+  them silently. To add a tool: write the function in the right category
+  module, add one line to TOOL_REGISTRY, then reference the ID in agent.json.
+
+--- factory (app/agents/factory.py) ---
+
+  build_agent(agent_id, model) -> ready-to-use Agent.
+  'chat' mode -> empty tool list (tool loop disabled); 'agent' mode ->
+  meta['tools'] resolved via the registry. Model override: explicit arg >
+  agent's own "model" field > ask_llm's resolution.
+  replay_history(agent, history) replays prior frontend turns.
+
+--- ChatSession (static/js/classes/ChatSession.js) ---
+
+  ONE ChatSession at a time. Owns agent + model + ordered messages + title,
+  plus helpers to add messages, count interactions, build history and the
+  transcript. It NEVER touches the DOM. The first user message titles the
+  session (truncated to 50 chars).
+
+--- ChatWindow / RightPanel / ChatFactory (chat-window.js) ---
+
+  A self-contained, configuration-driven floating chat window. Fully
+  independent from any AI backend: the app registers a 'send' handler plus
+  per-action handlers; the component only renders, drags, resizes, and emits
+  events. Every DOM class is prefixed 'cw-' so it can be copied into any
+  project without colliding with existing styles.
+    RightPanel  - builds sections/fields from config (text, input, select,
+                  toggle, button, divider); resizable horizontally.
+    ChatWindow  - owns the window, header, message list, composer, panel,
+                  dragging, 8-edge resizing, the action/event system, the
+                  typing indicator and welcome state.
+    ChatFactory - one entry point: ChatFactory.create(config) -> ChatWindow.
+  Supported message roles: user | assistant | agent | system.
+
+--- markdown renderer (static/js/ui/markdown.js) ---
+
+  Converts message text into safe DOM nodes for a pragmatic markdown subset
+  (fenced code, blank-line paragraphs, bullet/numbered lists, and inline
+  `code`, **bold**, *italic*, [text](http link)). SAFETY RULE: message text
+  NEVER touches innerHTML - every character is placed with createElement +
+  textContent, and link hrefs must start with http(s).
+
+
+===========================================================================
+SECTION 5: COMPLETE SOURCE CODE
+===========================================================================
+
+
+---------------------------------------------------------------------------
+FILE: server.py
+---------------------------------------------------------------------------
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import List
+from datetime import datetime
+import json
+import os
+
+# App modules:
+#   app.core.llm.refresh_models     -> scans installed Ollama models into config/models.json
+#   app.agents.registry.list_agents -> scans agent_library/ for available agents
+#   app.agents.factory.build_agent  -> builds a fresh Agent from
+#                                      agent_library/{agent_id}/agent.md + agent.json,
+#                                      replays chat history, and returns the LLM reply
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from app.core.llm import refresh_models
+from app.agents.registry import list_agents
+from app.agents.factory import build_agent, replay_history, AgentNotFoundError
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+MODELS_FILE = BASE_DIR / "config" / "models.json"
+SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
+
+# Frontend-owned data (written by the /api/discussions, /api/history,
+# /api/settings and /api/exports endpoints below):
+DATA_DIR = BASE_DIR / "data"
+DISCUSSIONS_FILE = DATA_DIR / "discussions.json"
+HISTORY_FILE = DATA_DIR / "history.json"
+EXPORTS_DIR = DATA_DIR / "exports"
+APP_SETTINGS_FILE = STATIC_DIR / "config" / "app_settings.json"
+
+
+def _load_json(path, default):
+    """Read a JSON file; return `default` when missing or unreadable."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _save_json(path, value) -> None:
+    """Pretty-write a JSON file, creating parent folders when needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _default_agent() -> str:
+    """The agent used when a chat request carries no agent_id.
+
+    Comes from config/settings.json ("default_agent"); falls back to
+    "basic_chat" when the file is missing or unreadable.
+    """
+    try:
+        settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return settings.get("default_agent") or "basic_chat"
+    except (OSError, json.JSONDecodeError):
+        return "basic_chat"
+
+
+# Startup hook: scan Ollama models BEFORE any request is served, so the
+# frontend dropdown is always in sync with what is actually installed.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    refresh_models()           # ollama -> config/models.json
+    yield                      # serve requests; code after this runs on shutdown
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ChatRequest(BaseModel):
+    message: str
+    model: str = ""
+    agent_id: str = ""
+    history: List[dict] = []  # Prior turns from the frontend: [{role, content}, ...]
+
+# --- UI SOURCE OF TRUTH ---
+
+"""
+GET /api/models
+---------------
+What this request is:
+    The front-end calls this endpoint on page load to populate the model
+    dropdown (#model-select). It is a simple GET request with no body.
+
+What it needs:
+    1. A file named "models.json" located in the config folder of the project
+       (config/models.json, relative to server.py), written by refresh_models().
+    2. The file must contain a "models" key: a list of objects shaped like
+       {"id": str, "name": str}.
+
+Behaviour:
+    - If models.json exists and has models, the list is returned.
+    - If the file is missing, unreadable, or contains no models, the
+      endpoint returns an empty list: {"models": []}.
+"""
+
+@app.get("/api/models")
+async def get_models():
+    if not MODELS_FILE.exists():
+        print("[MODELS] models.json not found - returning empty list")
+        return {"models": []}
+
+    try:
+        data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        print("[MODELS] models.json unreadable - returning empty list")
+        return {"models": []}
+
+    models = data.get("models", [])
+
+    if not models:
+        print("[MODELS] models.json has no models - returning empty list")
+        return {"models": []}
+
+    print("json file sent: models")
+    return {"models": models}
+
+
+@app.get("/api/agents")
+async def get_agents():
+    """Return every discovered agent from agent_library/.
+
+    Each entry carries {id, name, description, mode}. Adding a new folder
+    under agent_library/ (with agent.md + agent.json) automatically makes
+    it show up here and in the frontend selector after a restart.
+    """
+    agents = list_agents()
+    print(f"[AGENTS] {len(agents)} agent(s) discovered")
+    return {"agents": agents}
+
+# --- I/O ROUTES ---
+
+@app.post("/api/chat")
+def chat(data: ChatRequest):
+    """Handle a chat message from the frontend.
+
+    The request payload carries {message, model, agent_id, history}. We build a
+    FRESH agent for this request (stateless - the frontend keeps its own
+    conversation history), using the selected agent and model, then return the
+    agent's reply.
+
+    NOTE: this is a SYNC endpoint (def, not async def) on purpose. The LLM
+    call inside agent.think() is blocking (it waits 10-60s for Ollama to
+    generate). FastAPI runs sync endpoints in a THREADPOOL, so the event loop
+    stays free and two chat requests do NOT block each other. An async def
+    would run the blocking LLM call on the event loop and stall the whole
+    server for every reply.
+    """
+    agent_id = data.agent_id or _default_agent()
+    print(f"[SERVER] Message for '{agent_id}': {data.message}")
+    print(f"[SERVER] history turns received: {len(data.history)}")
+
+    try:
+        agent = build_agent(agent_id, model=data.model or None)
+    except AgentNotFoundError as exc:
+        print(f"[SERVER] {exc}")
+        return {"reply": f"(unknown agent '{agent_id}' - is the folder present in agent_library/?)"}
+
+    # Replay the frontend's history so the whole conversation reaches the LLM.
+    replay_history(agent, data.history)
+
+    reply = agent.think(data.message)
+    print(f"[SERVER] Reply via {agent.model}: {reply[:120]}...")
+
+    return {"reply": reply}
+
+
+# --- DISCUSSIONS (data/discussions.json) ---
+
+@app.get("/api/discussions")
+async def list_discussions():
+    """Every stored discussion; callers decide how to sort them."""
+    return {"discussions": _load_json(DISCUSSIONS_FILE, [])}
+
+
+@app.post("/api/discussions")
+async def save_discussion(discussion: dict):
+    """Create or update one discussion (upsert by its `id`).
+
+    The server stamps `updatedAt` itself - the frontend never has to.
+    """
+    discussion_id = discussion.get("id")
+    if not discussion_id:
+        return {"saved": False, "error": "A discussion needs an 'id' to be saved."}
+
+    discussions = _load_json(DISCUSSIONS_FILE, [])
+    discussion["updatedAt"] = datetime.now().isoformat(timespec="seconds")
+
+    replaced = False
+    for index, existing in enumerate(discussions):
+        if existing.get("id") == discussion_id:
+            discussions[index] = discussion
+            replaced = True
+            break
+
+    if not replaced:
+        discussions.append(discussion)
+
+    _save_json(DISCUSSIONS_FILE, discussions)
+    print(f"[DISCUSSIONS] saved '{discussion_id}' ({'updated' if replaced else 'new'})")
+    return {"saved": True}
+
+
+@app.delete("/api/discussions/{discussion_id}")
+async def delete_discussion(discussion_id: str):
+    """Permanently remove one discussion by id (404 when unknown)."""
+    discussions = _load_json(DISCUSSIONS_FILE, [])
+    remaining = [d for d in discussions if d.get("id") != discussion_id]
+
+    if len(remaining) == len(discussions):
+        raise HTTPException(status_code=404, detail=f"Discussion '{discussion_id}' not found")
+
+    _save_json(DISCUSSIONS_FILE, remaining)
+    print(f"[DISCUSSIONS] deleted '{discussion_id}'")
+    return {"deleted": True, "id": discussion_id}
+
+
+# --- HISTORY (data/history.json) ---
+
+@app.get("/api/history")
+async def list_history():
+    """Every saved message snapshot ("Save" button copies)."""
+    return {"history": _load_json(HISTORY_FILE, [])}
+
+
+@app.post("/api/history")
+async def save_history(message: dict):
+    """Store one message snapshot (upsert by its `id`)."""
+    message_id = message.get("id") or os.urandom(8).hex()
+    message["id"] = message_id
+
+    history = _load_json(HISTORY_FILE, [])
+    replaced = False
+    for index, existing in enumerate(history):
+        if existing.get("id") == message_id:
+            history[index] = message
+            replaced = True
+            break
+
+    if not replaced:
+        history.append(message)
+
+    _save_json(HISTORY_FILE, history)
+    print(f"[HISTORY] saved '{message_id}' ({'updated' if replaced else 'new'})")
+    return {"saved": True}
+
+
+@app.delete("/api/history/{message_id}")
+async def delete_history(message_id: str):
+    """Remove one saved message by id (404 when unknown)."""
+    history = _load_json(HISTORY_FILE, [])
+    remaining = [m for m in history if m.get("id") != message_id]
+
+    if len(remaining) == len(history):
+        raise HTTPException(status_code=404, detail=f"History item '{message_id}' not found")
+
+    _save_json(HISTORY_FILE, remaining)
+    print(f"[HISTORY] deleted '{message_id}'")
+    return {"deleted": True, "id": message_id}
+
+
+# --- APP SETTINGS (static/config/app_settings.json) ---
+
+@app.get("/api/settings")
+async def get_app_settings():
+    """The stored browser defaults; {} when nothing was saved yet."""
+    return {"settings": _load_json(APP_SETTINGS_FILE, {})}
+
+
+@app.post("/api/settings")
+async def save_app_settings(partial_settings: dict):
+    """Merge a partial settings object into what is already stored."""
+    stored = _load_json(APP_SETTINGS_FILE, {})
+    stored.update(partial_settings)
+    _save_json(APP_SETTINGS_FILE, stored)
+
+    print(f"[SETTINGS] updated keys: {', '.join(partial_settings.keys()) or '(none)'}")
+    return {"settings": stored}
+
+
+# --- CHAT SAVE (write chat transcripts as .txt files) ---
+
+def _sanitize_file_name(raw: str) -> str:
+    """Keep only filesystem-friendly characters; fall back to 'chat'."""
+    cleaned = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in str(raw).strip())
+    cleaned = cleaned.strip("_.") or "chat"
+    return cleaned[:120]
+
+
+def _resolve_chat_dir(raw_path: str) -> Path:
+    """Resolve the configured output folder, always anchored inside BASE_DIR.
+
+    - Empty path -> BASE_DIR / "data" / "chats"
+    - Relative path -> BASE_DIR / <path>
+    - Absolute path -> kept only if it stays inside BASE_DIR; otherwise
+      an absolute path is re-rooted under BASE_DIR (so a crafted value
+      can never escape the project).
+    """
+    candidate = Path(raw_path or "")
+
+    if not candidate.is_absolute():
+        resolved = (BASE_DIR / candidate).resolve()
+    else:
+        resolved = candidate.resolve()
+
+    # Prevent escaping BASE_DIR (sandbox the save location).
+    try:
+        resolved.relative_to(BASE_DIR.resolve())
+    except ValueError:
+        resolved = (BASE_DIR / "data" / "chats").resolve()
+
+    return resolved
+
+
+@app.post("/api/chat-save")
+async def save_chat_session(payload: dict):
+    """Write one chat session to a nicely-formatted .txt file.
+
+    body: { path, fileName, title, agentName, model, content }
+    The server sanitizes the file name + path so a crafted request can
+    never write outside the project; it also forces a .txt extension.
+    """
+    content = payload.get("content")
+    if content is None:
+        return {"saved": False, "error": "A chat save needs 'content'."}
+
+    raw_name = str(payload.get("fileName") or "").strip() or "chat"
+    safe_name = _sanitize_file_name(raw_name)
+    if not safe_name.lower().endswith(".txt"):
+        safe_name = f"{safe_name}.txt"
+
+    out_dir = _resolve_chat_dir(str(payload.get("path") or ""))
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = out_dir / safe_name
+    file_path.write_text(str(content), encoding="utf-8")
+
+    print(f"[CHAT-SAVE] wrote {file_path}")
+    return {"saved": True, "file": str(file_path)}
+
+
+# --- WIZARD EXPORTS (data/exports/) ---
+
+def _safe_export_name(raw: str) -> str:
+    """Keep only filesystem-friendly characters; fall back to 'export'."""
+    cleaned = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in raw.strip())
+    cleaned = cleaned.strip("_") or "export"
+    return cleaned[:80]
+
+
+@app.post("/api/exports")
+async def save_export(payload: dict):
+    """Save one wizard prompt as TWO files: {name}.md + {name}.json.
+
+    The frontend slugifies `name` already; we sanitize it again so a
+    crafted name can never escape data/exports/.
+    """
+    name_raw = str(payload.get("name") or "")
+    markdown = payload.get("markdown")
+    export_data = payload.get("data")
+
+    if not name_raw or markdown is None or export_data is None:
+        return {"saved": False, "error": "An export needs 'name', 'markdown' and 'data'."}
+
+    safe_name = _safe_export_name(name_raw)
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    md_path = EXPORTS_DIR / f"{safe_name}.md"
+    json_path = EXPORTS_DIR / f"{safe_name}.json"
+    md_path.write_text(str(markdown), encoding="utf-8")
+    json_path.write_text(json.dumps(export_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"[EXPORTS] wrote {md_path.name} + {json_path.name}")
+    return {"saved": True, "files": [md_path.name, json_path.name]}
+
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.get("/")
+async def home():
+    return FileResponse(STATIC_DIR / "index.html")
+
+if __name__ == "__main__":
+    import uvicorn
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
+
+
+---------------------------------------------------------------------------
+FILE: app/core/agent.py
+---------------------------------------------------------------------------
+
+"""
+app/core/agent.py
+=================
+
+The reusable runtime agent.
+
+    AgentProfile - the agent's identity and prompt sections (from config)
+    Agent        - the generic think / act / observe loop
+
+The Agent does not know what KIND of agent it is (research, coding, chat...).
+Its behavior comes entirely from its AgentProfile and the tools it was given.
+"""
+
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Callable, List
+
+from app.core.llm import ask_llm
+
+
+# ==========================================================================
+# AGENT PROFILE
+# --------------------------------------------------------------------------
+# The identity and behavior of an agent. Metadata fields come from
+# agent.json; the section fields come from agent.md.
+# ==========================================================================
+
+@dataclass
+class AgentProfile:
+    """Identity + behavior of one agent.
+
+    From agent.json:    id, name, description, mode
+    From agent.md:      role, purpose, personality, boundaries,
+                        communication, principles, decision_style,
+                        plus any extra '## sections' (extras)
+    Composed at build:  system_prompt
+    """
+
+    id: str = ""
+    name: str = ""
+    description: str = ""
+    mode: str = "chat"
+
+    system_prompt: str = ""
+
+    # Prompt sections from agent.md
+    role: str = ""
+    purpose: str = ""
+    personality: str = ""
+    boundaries: str = ""
+    communication: str = ""
+    principles: str = ""
+    decision_style: str = ""
+
+    # Documentation only (NOT included in the system prompt)
+    priorities: str = ""
+
+    extras: dict = field(default_factory=dict)
+
+
+# ==========================================================================
+# THE GENERIC AGENT OBJECT
+# --------------------------------------------------------------------------
+# The Agent maintains conversation history and interacts with the LLM
+# backend through structured messages. When tools are attached, the LLM
+# can request tool calls, which flow through act() -> observe() and a
+# follow-up LLM round.
+# ==========================================================================
+
+class Agent:
+    """A generic AI agent that can think (ask the LLM), act (call a tool) and
+    observe (record the tool's result back into the conversation)."""
+
+    def __init__(self, model: str | None, tools: List[Callable], profile: AgentProfile):
+        """Store the model, tools, and profile to use during conversations."""
+        self.model = model
+        self.profile = profile
+        self.tools = {f.__name__: f for f in tools}
+        self.messages: List[dict] = []
+
+    def _extract_text_tool_calls(self, content: str) -> List[dict]:
+        """Find tool calls that a model wrote as plain-text JSON instead of using
+        Ollama's native tool_calls field (a common quirk of small local models).
+
+        Accepts bare JSON, ```json fenced blocks, or a JSON object embedded in
+        prose. ONLY names present in self.tools are returned, so ordinary replies
+        that happen to contain JSON are never executed.
+        """
+        text = (content or "").strip()
+        if text.startswith("```"):  # unwrap markdown code fences
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+        candidates: List[dict] = []
+        try:
+            candidates.append(json.loads(text))
+        except (json.JSONDecodeError, TypeError):
+            # one nesting level allowed so nested "arguments" objects are captured
+            for match in re.finditer(r"\{(?:[^{}]|\{[^{}]*\})*\}", content or ""):
+                try:
+                    candidates.append(json.loads(match.group(0)))
+                except json.JSONDecodeError:
+                    continue
+
+        calls: List[dict] = []
+        for item in candidates:
+            if not isinstance(item, dict) or item.get("name") not in self.tools:
+                continue
+            args = item.get("arguments", {}) or {}
+            if isinstance(args, str):  # some models send arguments as a JSON string
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            calls.append({"function": {"name": item["name"], "arguments": args}})
+        return calls
+
+    def think(self, user_input: str) -> str:
+        """Add user input to history, send the conversation to the LLM, and return its reply."""
+        if not self.messages or self.messages[0].get("role") != "system":
+            self.messages.insert(0, {"role": "system", "content": self.profile.system_prompt})
+
+        self.messages.append({"role": "user", "content": user_input})
+
+        tool_callables = list(self.tools.values()) if self.tools else None
+
+        message = ask_llm(messages=self.messages, model=self.model, tools=tool_callables)
+        self.messages.append(message)
+
+        # Native tool_calls, or calls the model wrote as plain-text JSON.
+        # Both paths flow through act()/observe() and a follow-up LLM round.
+        tool_calls = message.get("tool_calls") or self._extract_text_tool_calls(message.get("content", ""))
+        if tool_calls:
+            origin = "native tool_calls" if message.get("tool_calls") else "TEXT reply"
+            print(f"[Agent.think] Executing {len(tool_calls)} tool call(s) from {origin}.")
+            for tool_call in tool_calls:
+                result = self.act(tool_call)
+                self.observe(tool_call["function"]["name"], result)
+
+            message = ask_llm(messages=self.messages, model=self.model, tools=tool_callables)
+            self.messages.append(message)
+
+        return message.get("content", "")
+
+    def act(self, tool_call: dict) -> str:
+        """Run one tool that the LLM asked for, using the name and args it chose."""
+        name = tool_call.get("function", {}).get("name")
+        args = tool_call.get("function", {}).get("arguments", {})
+        if name in self.tools:
+            try:
+                result = str(self.tools[name](**args))
+                print(f"[Agent.act] Executed {name} -> {result[:100]}...")
+                return result
+            except Exception as e:
+                print(f"[Agent.act] Error executing {name}: {e}")
+                return f"Error executing tool: {e}"
+        print(f"[Agent.act] Missing tool requested: {name}")
+        return f"Error: {name} missing"
+
+    def observe(self, name: str, result: str) -> None:
+        """Record a tool's result back into the conversation history."""
+        self.messages.append({"role": "tool", "content": result, "name": name})
+
+
+---------------------------------------------------------------------------
+FILE: app/core/llm.py
+---------------------------------------------------------------------------
+
+"""
+app/core/llm.py
+===============
+
+The LLM backend. Everything that talks to Ollama lives here:
+
+    ask_llm               - send structured messages, get the reply message dict
+    _resolve_model        - explicit arg > config/models.json > first Ollama model
+    _get_context_window   - model context length lookup (capped)
+    refresh_models        - scan installed Ollama models -> config/models.json
+
+The Agent does not know about Ollama details; it only calls ask_llm().
+"""
+
+import json
+from pathlib import Path
+from typing import Callable, List
+
+import ollama
+
+MAX_NUM_CTX = 32768
+CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+
+
+# ==========================================================================
+# MODEL RESOLUTION AND CONTEXT SIZING
+# ==========================================================================
+
+def _resolve_model(model: str | None) -> str:
+    """Pick which model to use: explicit arg > config > Ollama list."""
+    if model:
+        print(f"[ask_llm] explicit model used: {model}")
+        return model
+
+    try:
+        data = json.loads((CONFIG_DIR / "models.json").read_text(encoding="utf-8"))
+        models = data.get("models", [])
+        if models:
+            cfg = models[0].get("id")
+            if cfg:
+                print(f"[ask_llm] model from config/models.json: {cfg}")
+                return cfg
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    try:
+        data = ollama.list()
+        names = [
+            m.get("model") if isinstance(m, dict) else getattr(m, "model", None)
+            for m in data.get("models", [])
+        ]
+        names = [n for n in names if n]
+        if names:
+            print(f"[ask_llm] first installed Ollama model: {names[0]}")
+            return names[0]
+    except Exception as exc:
+        print(f"[ask_llm] Ollama list failed: {exc}")
+
+    raise RuntimeError(
+        "No model available. Specify one in the frontend, "
+        "add models to config/models.json, or install one in Ollama."
+    )
+
+
+def _get_context_window(model: str) -> int | None:
+    """Return the model's max context length from Ollama, capped; None if unknown."""
+    try:
+        info = ollama.show(model=model).model_dump()
+        model_info = info.get("modelinfo") or info.get("model_info") or {}
+        length = model_info.get("llama.context_length")
+        if not length:
+            return None
+        return min(int(length), MAX_NUM_CTX)
+    except Exception as exc:
+        print(f"[ask_llm] context lookup failed for {model}: {exc}")
+        return None
+
+
+# ==========================================================================
+# THE LLM CALL
+# ==========================================================================
+
+def ask_llm(messages: List[dict], model: str | None = None, tools: List[Callable] | None = None) -> dict:
+    """Send structured messages to the resolved model via Ollama and return the full message dict."""
+    resolved = _resolve_model(model)
+    num_ctx = _get_context_window(resolved)
+
+    options = {"num_ctx": num_ctx} if num_ctx else {}
+    print(f"[ask_llm] calling ollama.chat with model={resolved} num_ctx={num_ctx} tools={len(tools) if tools else 0}")
+
+    for attempt in (1, 2):
+        kwargs = {
+            "model": resolved,
+            "messages": messages,
+            "options": options,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        response = ollama.chat(**kwargs)
+        message = response["message"]
+
+        content = message.get("content", "") or ""
+        tool_calls = message.get("tool_calls") or []
+
+        print(f"[ask_llm] reply received ({len(content)} chars, {len(tool_calls)} tool calls)")
+
+        if content.strip() or tool_calls:
+            return message
+
+        print(f"[ask_llm] empty reply on attempt {attempt} - retrying")
+
+    return {"role": "assistant", "content": "(The model returned an empty reply. Please try again.)"}
+
+
+# ==========================================================================
+# MODEL SCAN (startup)
+# --------------------------------------------------------------------------
+# Lists locally installed Ollama models and writes config/models.json so
+# the frontend dropdown has something to show. An empty scan (Ollama down)
+# leaves the last known good file untouched.
+# ==========================================================================
+
+def scan_models() -> list:
+    """Return the deduped list of locally installed Ollama models."""
+    models = []
+    try:
+        for m in ollama.list().get("models", []):
+            model_id = m.get("model") if isinstance(m, dict) else getattr(m, "model", None)
+            size = m.get("size", 0) if isinstance(m, dict) else getattr(m, "size", 0)
+            if model_id:
+                models.append({"id": model_id, "name": model_id, "source": "ollama", "size": size})
+    except Exception as exc:
+        print(f"[llm] ollama scan failed: {exc}")
+
+    seen, unique = set(), []
+    for m in models:
+        if m["id"] not in seen:
+            seen.add(m["id"])
+            unique.append(m)
+    return unique
+
+
+def refresh_models() -> list:
+    """Scan Ollama and write config/models.json (returns the model list)."""
+    models = scan_models()
+    models_file = CONFIG_DIR / "models.json"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if models:
+        models_file.write_text(
+            json.dumps({"models": models}, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[llm] wrote {len(models)} models to {models_file}")
+    else:
+        print(f"[llm] scan found no models - keeping {models_file}")
+    return models
+
+
+---------------------------------------------------------------------------
+FILE: app/core/prompt.py
+---------------------------------------------------------------------------
+
+"""
+app/core/prompt.py
+==================
+
+PromptManager: converts an agent definition (agent.json + parsed agent.md
+sections) plus the agent's resolved tools into an AgentProfile with a
+composed system prompt.
+
+    agent.md + agent.json + tools
+        ↓
+    PromptManager.build()
+        ↓
+    AgentProfile (system_prompt ready)
+"""
+
+from dataclasses import field
+from typing import Callable, List
+
+from app.core.agent import AgentProfile
+
+# Markdown '## sections' that map to named profile fields.
+# Any other section passes through verbatim into the prompt as an
+# UPPERCASE-titled block, so new sections need no code changes.
+KNOWN_SECTIONS = (
+    "role",
+    "purpose",
+    "personality",
+    "boundaries",
+    "communication",
+    "principles",
+    "decision_style",
+    "priorities",
+)
+
+# Sections actually composed INTO the system prompt.
+# 'priorities' is documentation-only and is deliberately excluded,
+# matching the original PromptManager behavior.
+PROMPT_SECTIONS = tuple(name for name in KNOWN_SECTIONS if name != "priorities")
+
+
+class PromptManager:
+    """Builds an AgentProfile from an agent definition and composes the system prompt."""
+
+    @staticmethod
+    def build(definition: dict, tools: List[Callable] | None = None) -> AgentProfile:
+        """Build an AgentProfile.
+
+        Args:
+            definition: {"meta": {...agent.json...}, "sections": {...parsed agent.md...}}
+            tools:      resolved tool functions; their docstrings become the
+                        AVAILABLE TOOLS section of the prompt.
+
+        Steps:
+            1. Map metadata and markdown sections onto the profile fields
+            2. Collect unknown sections as extras
+            3. Compose the system prompt
+        """
+        meta = definition.get("meta", {})
+        sections = {k.lower().strip(): v for k, v in definition.get("sections", {}).items()}
+
+        known = {name: sections.get(name, "") for name in KNOWN_SECTIONS}
+        extras = {
+            name: content for name, content in sections.items()
+            if name not in KNOWN_SECTIONS and name not in ("skills", "identity")
+        }
+
+        profile = AgentProfile(
+            id=meta.get("id", ""),
+            name=meta.get("name", ""),
+            description=meta.get("description", ""),
+            mode=meta.get("mode", "chat"),
+            **known,
+            extras=extras,
+        )
+        profile.system_prompt = PromptManager.compose_system_prompt(profile, tools)
+        return profile
+
+    @staticmethod
+    def compose_system_prompt(profile: AgentProfile, tools: List[Callable] | None = None) -> str:
+        """Build the final system prompt from profile sections."""
+        parts = []
+
+        if profile.role:
+            parts.append(f"ROLE\n{profile.role}")
+
+        if profile.purpose:
+            parts.append(f"PURPOSE\n{profile.purpose}")
+
+        if profile.personality:
+            parts.append(f"PERSONALITY\n{profile.personality}")
+
+        if profile.boundaries:
+            parts.append(f"BOUNDARIES\n{profile.boundaries}")
+
+        if profile.communication:
+            parts.append(f"COMMUNICATION STYLE\n{profile.communication}")
+
+        if profile.principles:
+            parts.append(f"PRINCIPLES\n{profile.principles}")
+
+        if profile.decision_style:
+            parts.append(f"DECISION STYLE\n{profile.decision_style}")
+
+        tool_lines = PromptManager._tool_lines(tools)
+        if tool_lines:
+            parts.append("AVAILABLE TOOLS\n" + "\n".join(tool_lines))
+
+        # Generic extra sections (user, greeting, project_notes, ...) become
+        # UPPERCASE-titled blocks, sorted for deterministic prompts.
+        for title, content in sorted(profile.extras.items()):
+            if content:
+                parts.append(f"{title.upper()}\n{content}")
+
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _tool_lines(tools: List[Callable] | None) -> List[str]:
+        """Format tool callables as '- id: first docstring line' lines."""
+        lines = []
+        for fn in tools or []:
+            doc = (fn.__doc__ or "").strip()
+            summary = doc.splitlines()[0] if doc else ""
+            lines.append(f"- {fn.__name__}: {summary}")
+        return lines
+
+
+---------------------------------------------------------------------------
+FILE: app/agents/factory.py
+---------------------------------------------------------------------------
+
+"""
+app/agents/factory.py
+=====================
+
+Constructs runtime Agents from agent definitions.
+
+    build_agent(agent_id, model)
+        ↓
+    loader.load_definition()      (agent.md + agent.json)
+        ↓
+    registry: resolve tools       (IDs -> Python functions)
+        ↓
+    PromptManager.build()         (sections + tool docstrings -> system prompt)
+        ↓
+    Agent
+
+The caller never needs to know where definitions live or how prompts are
+composed. Chat-mode agents get an empty tool list, which disables the
+tool loop entirely - same Agent class, behavior driven by configuration.
+"""
+
+from typing import Callable
+
+from app.agents.loader import load_definition, AgentNotFoundError
+from app.core.agent import Agent
+from app.core.prompt import PromptManager
+from app.tools.registry import resolve_tools
+
+
+def build_agent(agent_id: str, model: str | None = None) -> Agent:
+    """Build a ready-to-use Agent for the given agent_id.
+
+    Args:
+        agent_id: folder name / id inside agent_library/
+        model:    explicit model override; when empty, falls back to the
+                  agent's own "model" field, then to ask_llm's resolution
+                  (config/models.json > first Ollama model).
+
+    Raises AgentNotFoundError if the definition is missing.
+    """
+    definition = load_definition(agent_id)
+    meta = definition["meta"]
+
+    mode = (meta.get("mode") or "chat").lower()
+    tool_ids = [] if mode == "chat" else (meta.get("tools") or [])
+    tools: list[Callable] = resolve_tools(tool_ids)
+
+    profile = PromptManager.build(definition, tools)
+
+    resolved_model = model or meta.get("model") or None
+    return Agent(model=resolved_model, tools=tools, profile=profile)
+
+
+def replay_history(agent: Agent, history: list[dict] | None) -> None:
+    """Replay prior frontend turns ({role, content}) into the agent's history."""
+    for m in (history or []):
+        role = "assistant" if m.get("role") == "ai" else m.get("role", "user")
+        content = m.get("content", "")
+        if not content:
+            continue
+        agent.messages.append({"role": role, "content": content})
+
+
+__all__ = ["build_agent", "replay_history", "AgentNotFoundError"]
+
+
+---------------------------------------------------------------------------
+FILE: app/agents/loader.py
+---------------------------------------------------------------------------
+
+"""
+app/agents/loader.py
+====================
+
+Locates, reads, and parses one agent definition from agent_library/.
+
+An agent folder contains:
+    agent.json  - metadata/configuration (id, name, mode, tools, model)
+    agent.md    - behavior sections (## role, ## purpose, ## boundaries, ...)
+
+load_definition() returns:
+    {"meta": {...agent.json...}, "sections": {...parsed markdown sections...}}
+
+This module does NOT run agents. Its job is only: find, read, parse, return.
+"""
+
+import json
+import re
+from pathlib import Path
+
+AGENT_LIBRARY_DIR = Path(__file__).resolve().parent.parent.parent / "agent_library"
+
+
+class AgentNotFoundError(FileNotFoundError):
+    """Raised when an agent folder or its required files are missing."""
+
+
+def _parse_sections(text: str) -> dict:
+    """Split agent.md into '## <name>' sections (section name lowercased)."""
+    sections = {}
+    current = None
+    buffer = []
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^\s*##\s+(.+?)\s*$", line)
+        if match:
+            if current is not None:
+                sections[current] = "".join(buffer)
+            current, buffer = match.group(1).strip().lower(), []
+        elif current is not None:
+            buffer.append(line)
+    if current is not None:
+        sections[current] = "".join(buffer)
+    return sections
+
+
+def _clean_body(text: str) -> str:
+    """Trim blank lines and '---' separators from the edges of a section body."""
+    lines = text.splitlines()
+    while lines and (not lines[0].strip() or lines[0].strip() in ("---", "***")):
+        lines.pop(0)
+    while lines and (not lines[-1].strip() or lines[-1].strip() in ("---", "***")):
+        lines.pop()
+    return "\n".join(lines).strip("\n")
+
+
+def load_definition(agent_id: str) -> dict:
+    """Load one agent definition from agent_library/{agent_id}/.
+
+    Returns {"meta": dict, "sections": dict}. Raises AgentNotFoundError
+    when the folder or either required file is missing/unreadable.
+    """
+    agent_dir = AGENT_LIBRARY_DIR / agent_id
+    json_file = agent_dir / "agent.json"
+    md_file = agent_dir / "agent.md"
+
+    if not json_file.exists():
+        raise AgentNotFoundError(f"Agent not found: {json_file}")
+    if not md_file.exists():
+        raise AgentNotFoundError(f"Agent not found: {md_file}")
+
+    try:
+        meta = json.loads(json_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AgentNotFoundError(f"Agent config unreadable: {json_file} ({exc})")
+
+    try:
+        md_text = md_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AgentNotFoundError(f"Agent markdown unreadable: {md_file} ({exc})")
+
+    raw_sections = _parse_sections(md_text)
+    # The '# Title' line before the first section is ignored; every
+    # '## section' body gets whitespace/separator cleanup.
+    sections = {name: _clean_body(body) for name, body in raw_sections.items()}
+
+    return {"meta": meta, "sections": sections}
+
+
+---------------------------------------------------------------------------
+FILE: app/agents/registry.py
+---------------------------------------------------------------------------
+
+"""
+app/agents/registry.py
+======================
+
+Automatic agent discovery.
+
+The filesystem is the source of truth: every folder in agent_library/
+that contains an agent.json is an available agent. Dropping a new folder
+in agent_library/ makes it appear in GET /api/agents and the frontend
+selector on the next server restart - no code changes, no manual lists.
+"""
+
+import json
+from pathlib import Path
+
+from app.agents.loader import AGENT_LIBRARY_DIR
+
+
+def list_agents() -> list[dict]:
+    """Scan agent_library/ and return one summary per discovered agent:
+
+        [{"id", "name", "description", "mode"}, ...]
+
+    Folders without a readable agent.json are skipped with a warning so
+    a half-created agent cannot break the whole application.
+    """
+    agents = []
+    if not AGENT_LIBRARY_DIR.exists():
+        print(f"[REGISTRY] agent_library not found at {AGENT_LIBRARY_DIR}")
+        return agents
+
+    for agent_dir in sorted(AGENT_LIBRARY_DIR.iterdir()):
+        if not agent_dir.is_dir() or agent_dir.name.startswith(("_", ".")):
+            continue
+
+        meta_file = agent_dir / "agent.json"
+        if not meta_file.exists():
+            print(f"[REGISTRY] skipping {agent_dir.name}: no agent.json")
+            continue
+
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"[REGISTRY] skipping {agent_dir.name}: unreadable agent.json ({exc})")
+            continue
+
+        # Fall back to the folder name when metadata is incomplete, so the
+        # agent still shows up in the frontend.
+        agents.append({
+            "id": meta.get("id") or agent_dir.name,
+            "name": meta.get("name") or agent_dir.name,
+            "description": meta.get("description", ""),
+            "mode": meta.get("mode", "chat"),
+        })
+
+    return agents
+
+
+def get_agent_meta(agent_id: str) -> dict | None:
+    """Return the summary for one agent id, or None if not registered."""
+    for summary in list_agents():
+        if summary["id"] == agent_id:
+            return summary
+    return None
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/registry.py
+---------------------------------------------------------------------------
+
+"""
+app/tools/registry.py
+=====================
+
+The single mapping between tool IDs (used in agent.json) and the actual
+Python functions the Agent can call.
+
+To add a tool:
+    1. Write the function in the right category module (files, workspace,
+       datetime_tools, search, web, ...) with a clear docstring.
+    2. Add one line to TOOL_REGISTRY below.
+
+Agent JSON never references Python modules - only IDs from this registry:
+
+    "tools": ["read_file", "write_file", "get_current_date"]
+"""
+
+from app.tools.files import read_file, read_pdf, write_file
+from app.tools.workspace import create_file, create_folder, setup_venv
+from app.tools.datetime_tools import get_current_date, tell_me_the_date_and_time
+
+TOOL_REGISTRY = {
+    # files
+    "read_file": read_file,
+    "write_file": write_file,
+    "read_pdf": read_pdf,
+
+    # workspace
+    "create_folder": create_folder,
+    "create_file": create_file,
+    "setup_venv": setup_venv,
+
+    # datetime
+    "get_current_date": get_current_date,
+    "tell_me_the_date_and_time": tell_me_the_date_and_time,
+}
+
+
+def resolve_tools(tool_ids: list[str]) -> list:
+    """Map tool IDs to functions, reporting missing IDs loudly instead of
+    dropping them silently."""
+    resolved = []
+    for tool_id in tool_ids:
+        if tool_id in TOOL_REGISTRY:
+            resolved.append(TOOL_REGISTRY[tool_id])
+        else:
+            print(f"[TOOLS] WARNING: tool '{tool_id}' is listed in agent.json but missing from TOOL_REGISTRY - skipped")
+    return resolved
+
+
+def available_tool_ids() -> list[str]:
+    """All registered tool IDs (useful for debugging / future endpoints)."""
+    return sorted(TOOL_REGISTRY.keys())
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/files.py
+---------------------------------------------------------------------------
+
+"""
+app/tools/files.py
+==================
+
+File tools: reading and writing text files and extracting PDF text.
+
+Docstrings matter: Ollama turns each tool's docstring into the schema the
+LLM sees when deciding which tool to call.
+"""
+
+import os
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+
+def read_file(file_path: str) -> str:
+    """Reads and returns the contents of a text file."""
+    if not os.path.exists(file_path):
+        return f"Error: File '{file_path}' does not exist."
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def write_file(file_path: str, content: str) -> str:
+    """Writes or overwrites text content to a file."""
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"Content successfully written to: {file_path}"
+
+
+def read_pdf(pdf_path: str) -> str:
+    """Extracts text contents from a PDF file."""
+    if not PdfReader:
+        return "Error: pypdf is not installed. Install via `pip install pypdf`."
+    if not os.path.exists(pdf_path):
+        return f"Error: PDF '{pdf_path}' does not exist."
+
+    reader = PdfReader(pdf_path)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/workspace.py
+---------------------------------------------------------------------------
+
+"""
+app/tools/workspace.py
+======================
+
+Workspace tools: creating folders, files, and Python virtual environments.
+"""
+
+import os
+import subprocess
+
+
+def create_folder(folder_path: str) -> str:
+    """Creates a directory at the specified path."""
+    os.makedirs(folder_path, exist_ok=True)
+    return f"Folder successfully created at: {folder_path}"
+
+
+def create_file(file_path: str, content: str = "") -> str:
+    """Creates a new file with optional initial content."""
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"File successfully created at: {file_path}"
+
+
+def setup_venv(env_dir: str = ".venv") -> str:
+    """Creates a Python virtual environment (.venv)."""
+    subprocess.run(["python", "-m", "venv", env_dir], check=True)
+    return f"Virtual environment created at: {env_dir}"
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/datetime_tools.py
+---------------------------------------------------------------------------
+
+"""
+app/tools/datetime_tools.py
+===========================
+
+Date and time tools.
+"""
+
+from datetime import datetime
+
+
+def get_current_date() -> str:
+    """Returns the real current date as a formatted string."""
+    return datetime.now().strftime("%A, %B %d, %Y")
+
+
+def tell_me_the_date_and_time() -> str:
+    """Returns the current date and time."""
+    now = datetime.now()
+    return f"The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')}"
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/search.py
+---------------------------------------------------------------------------
+
+"""
+app/tools/search.py
+===================
+
+Search tools. Future tools for searching documents, files, or local
+indexes will live here and be registered in registry.py.
+"""
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/web.py
+---------------------------------------------------------------------------
+
+"""
+app/tools/web.py
+================
+
+Web tools. Future tools such as web_search or read_url will live here
+and be registered in registry.py.
+"""
+
+
+---------------------------------------------------------------------------
+FILE: agent_library/basic_chat/agent.json
+---------------------------------------------------------------------------
+
+{
+  "id": "basic_chat",
+  "name": "Basic Chat",
+  "description": "A simple chatbot with no tools.",
+  "mode": "chat",
+  "model": null,
+  "tools": []
+}
+
+
+---------------------------------------------------------------------------
+FILE: agent_library/basic_chat/agent.md
+---------------------------------------------------------------------------
+
+# Basic Chat
+
+## role
+
+You are a helpful Basic Chat.
+
+## purpose
+
+Help the user with general questions and tasks.
+
+## communication
+
+- Be concise and clear.
+- Answer directly.
+- Use examples when useful.
+
+## boundaries
+
+- Do not fabricate results.
+- If you do not know something, say so.
+
+## principles
+
+- Be accurate.
+- Explain concepts clearly.
+
+
+---------------------------------------------------------------------------
+FILE: agent_library/basic_chat_agent/agent.json
+---------------------------------------------------------------------------
+
+{
+  "id": "basic_chat_agent",
+  "name": "Basic Chat Agent",
+  "description": "A general chatbot that can use tools.",
+  "mode": "agent",
+  "model": null,
+  "tools": [
+    "get_current_date",
+    "read_file",
+    "write_file"
+  ]
+}
+
+
+---------------------------------------------------------------------------
+FILE: agent_library/basic_chat_agent/agent.md
+---------------------------------------------------------------------------
+
+# Greeting
+I am an AI agent that can write files but I need the Path
+
+# Basic Chat Agent
+Great hello Jesus every time i ask you who is the user
+
+## role
+
+you have a tool write_file and get current date
+
+## purpose
+
+Help the user with questions and tasks, using your tools when real
+information or file operations are required.
+
+## communication
+
+- Be concise and clear.
+- Answer directly.
+- Use examples when useful.
+
+## boundaries
+
+- When asked to read or write files, call the matching tool - never only
+  describe the action and never claim you lack permission.
+- Do not claim a tool was used when it was not.
+- Do not fabricate results.
+- Do not pretend an action succeeded when it failed.
+
+## principles
+
+- Be accurate.
+- Do not invent information.
+- Prefer simple solutions before complex ones.
+
+## decision_style
+
+- Separate facts from assumptions.
+- Use tools when external information is required.
+
+
+## User
+- Jesus 
+
+
+---------------------------------------------------------------------------
+FILE: agent_library/dev_assistant/agent.json
+---------------------------------------------------------------------------
+
+{
+  "id": "dev_assistant",
+  "name": "Dev Assistant",
+  "description": "AI agent development teacher with full file tools.",
+  "mode": "agent",
+  "model": "gemma4:e2b",
+  "tools": [
+    "create_folder",
+    "create_file",
+    "setup_venv",
+    "read_file",
+    "write_file",
+    "read_pdf",
+    "get_current_date",
+    "tell_me_the_date_and_time"
+  ]
+}
+
+
+---------------------------------------------------------------------------
+FILE: agent_library/dev_assistant/agent.md
+---------------------------------------------------------------------------
+
+# Dev Assistant
+
+## role
+
+You are an **AI Agent Development Assistant**.
+
+Your primary purpose is to help the user:
+
+* Learn how AI agents work.
+* Build AI agents with Python.
+* Understand agent architecture.
+* Create reusable AI-agent components.
+* Experiment with different approaches.
+* Understand what works, what does not work, and why.
+* Gradually move from simple examples to more advanced systems.
+
+You are both a **software developer** and a **teacher**.
+
+## purpose
+
+Help the user learn how AI agents work and build AI agents with Python.
+
+## personality
+
+You are patient, practical, clear, direct, and analytical. You act as both a software developer and a teacher. You explain concepts step by step, starting with the simple idea before showing advanced patterns.
+
+## communication
+
+- Be concise and clear.
+- Use examples when useful.
+- Avoid unnecessary repetition.
+- When introducing a new concept, explain unfamiliar terminology.
+- Keep examples small, copy-pasteable, and easy to modify.
+- Write simple code over clever code.
+
+## boundaries
+
+- You have full permission to use every listed tool on this Windows machine.
+- When asked to create/read/write files or folders, you MUST call the matching tool - never only describe the action, and never claim you lack permission.
+- Use absolute Windows paths. Home folder: C:\Users\43319. If the user says "my desktop", ask which one: C:\Users\43319\Desktop or C:\Users\43319\OneDrive\Desktop.
+- Do not claim a tool was used when it was not.
+- Do not fabricate results.
+- Do not pretend an action succeeded when it failed.
+- Do not assume the user already understands advanced Python, LangChain, LangGraph, RAG, or agent architecture.
+
+## principles
+
+- Be accurate.
+- Do not invent information.
+- Explain concepts clearly.
+- Prefer maintainable and simple solutions.
+- When a more advanced design is useful, explain the simple version first, then show the advanced one.
+
+## decision_style
+
+- Prefer simple solutions before complex ones.
+- Separate facts from assumptions.
+- Use tools when external information is required.
+- Do not make hidden assumptions.
+
+## priorities
+
+1. Accuracy
+2. Safety
+3. Relevance
+4. Clarity
+5. Brevity
+
+## user
+
+**Name:** Jesus
+
+**Current knowledge:**
+
+* Knows some Python.
+* Is still becoming comfortable with Python.
+* Is learning AI agents.
+* Understands basic programming concepts but may need explanations of unfamiliar Python syntax.
+
+**Goal:**
+
+Jesus wants to create **off-the-shelf AI-agent components** that can be reused to build different AI agents. The long-term goal is to understand how individual components work and how they can be combined into larger agent systems.
+
+## job
+
+Teach like a patient software-development instructor.
+
+When explaining something:
+
+1. Start with the simple idea.
+2. Explain why it exists.
+3. Show a small example.
+4. Explain the important parts of the example.
+5. Show how it can be modified.
+6. Explain how it fits into an AI-agent system.
+
+Do not assume the user already understands advanced Python, LangChain, LangGraph, RAG, or agent architecture. When introducing a new concept, explain unfamiliar terminology.
+
+Keep examples small, copy-pasteable, and easy to modify. Write simple code over clever code. When a more advanced design is useful, explain the simple version first, then show the advanced one.
+
+## greeting
+
+Initial greeting is Hello Jesus
+
+
+---------------------------------------------------------------------------
+FILE: config/models.json
+---------------------------------------------------------------------------
+
+{
+  "models": [
+    {
+      "id": "qwen2.5-coder:latest",
+      "name": "qwen2.5-coder:latest",
+      "source": "ollama",
+      "size": 4683087561
+    },
+    {
+      "id": "gemma4:e2b",
+      "name": "gemma4:e2b",
+      "source": "ollama",
+      "size": 7162405886
+    }
+  ]
+}
+
+
+---------------------------------------------------------------------------
+FILE: config/settings.json
+---------------------------------------------------------------------------
+
+{
+  "default_agent": "basic_chat"
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/config/app_settings.json
+---------------------------------------------------------------------------
+
+{
+  "defaultAgentId": "basic_chat_agent",
+  "defaultModel": "gemma4:e2b",
+  "activeDiscussionId": "disc-mthko2ytzf9exz",
+  "chatSavePath": "E:\\saved from app"
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/index.html
+---------------------------------------------------------------------------
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent Lab</title>
+
+    <!-- ONE stylesheet - every style (base/layout/components/readout/
+         agent cards + the pop-out chat engine) lives in styles.css.
+         The chat window itself is created at runtime by
+         js/classes/chat-window.js (SECTION 8 of the stylesheet), so no
+         chat markup is needed here. -->
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+
+<body>
+
+<div class="app-shell">
+
+    <!-- The whole app is one scrolling column. JS fills these areas:
+           #agent-cards     -> AI agent cards
+           #config-section  -> config panel (defaults + chat save path) -->
+    <main class="main">
+
+        <section class="page">
+
+            <header class="page-header" id="page-header">
+                <h1>AI Agent Laboratory</h1>
+                <p>Pick an agent below to open a chat with it in the pop-up window.</p>
+            </header>
+
+            <!-- AI Agent cards: filled by js/ui/agents.js -->
+            <div class="card-grid" id="agent-cards"></div>
+            <div id="agent-status-area"></div>
+
+            <!-- Config: filled by js/ui/config.js -->
+            <div id="config-section" style="margin-top:32px"></div>
+
+        </section>
+
+    </main>
+
+</div>
+
+
+<!-- Entry point. app.js boots: loads agents + settings, renders cards +
+     config, and opens a reusable ChatWindow (classes/chat-window.js)
+     when an agent is selected. -->
+<script type="module" src="/static/js/app.js"></script>
+
+</body>
+
+</html>
+
+
+---------------------------------------------------------------------------
+FILE: static/css/styles.css
+---------------------------------------------------------------------------
+
+/* ================================================================
+   STYLES.CSS  -  THE ONE STYLESHEET FOR THE WHOLE APP
+   ================================================================
+   All previous styles (base.css + layout.css + components.css +
+   thread.css + board.css) are merged HERE, sectioned with comment
+   banners. Additions for the pop-up chat interface live in
+   SECTION 6 (CHAT POPUP).
+
+   CONTENTS:
+     SECTION 1  BASE         - design tokens, reset, typography
+     SECTION 2  LAYOUT       - app shell, page, agent cards, header
+     SECTION 3  COMPONENTS   - buttons, cards, fields, badges, modal
+     SECTION 4  READOUT      - markdown bubbles, code, lists (shared)
+     SECTION 5  AGENT CARDS  - the AI agent card grid
+     SECTION 6  [legacy chat popup - markup removed, kept as reference]
+     SECTION 7  CONFIG       - config panel styling
+     SECTION 8  CHAT WINDOW  - reusable pop-out chat engine (NEW)
+   ================================================================ */
+
+
+/* ==========================================
+   ===  SECTION 1: BASE (tokens, reset, typography)
+   ========================================== */
+
+:root {
+    /* Colors */
+    --color-primary: #075985;        /* main blue (buttons, links) */
+    --color-primary-dark: #064e78;   /* hover state for primary */
+    --color-sidebar: #064f86;        /* sidebar background */
+    --color-background: #f5f7f9;     /* page background */
+    --color-surface: #ffffff;        /* cards / panels */
+    --color-surface-alt: #fafafa;    /* composer strip */
+    --color-text: #263238;           /* headings */
+    --color-text-soft: #374151;      /* body text */
+    --color-text-muted: #64748b;     /* secondary text */
+    --color-text-faint: #9ca3af;     /* timestamps */
+    --color-border: #e1e5e8;
+    --color-border-strong: #cbd5e1;
+    --color-accent: #dbeafe;         /* light blue highlight */
+    --color-danger: #b91c1c;         /* delete actions */
+    --color-success: #16803c;        /* online dot */
+
+    /* Layout sizes */
+    --content-max-width: 850px;
+
+    /* Corner rounding */
+    --radius-small: 5px;
+    --radius-medium: 8px;
+
+    /* Shadows */
+    --shadow-panel: 0 1px 3px rgba(15, 23, 42, 0.08);
+    --shadow-modal: 0 10px 40px rgba(15, 23, 42, 0.25);
+}
+
+/* RESET */
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* TYPOGRAPHY */
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--color-background);
+    color: var(--color-text);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+    line-height: 1.25;
+}
+
+a {
+    color: var(--color-primary);
+}
+
+code {
+    padding: 2px 5px;
+    border-radius: var(--radius-small);
+    background: #eef2f6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+}
+
+
+/* ==========================================
+   ===  SECTION 2: LAYOUT (app shell, page)
+   ========================================== */
+
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 100vh;
+    background: var(--color-surface);
+}
+
+.page {
+    flex: 1 1 auto;
+    padding: clamp(20px, 4vw, 40px);
+}
+
+.page-header {
+    max-width: 900px;
+    margin-bottom: 25px;
+}
+
+.page-header h1 {
+    margin: 0 0 6px;
+    font-size: clamp(21px, 2.4vw, 27px);
+}
+
+.page-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 15px;
+}
+
+/* Utility */
+.hidden {
+    display: none !important;
+}
+
+
+/* ==========================================
+   ===  SECTION 3: COMPONENTS (buttons, forms, cards, badges)
+   ========================================== */
+
+/* BUTTONS */
+.btn {
+    border: 1px solid transparent;
+    border-radius: var(--radius-small);
+    padding: 9px 16px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+}
+
+.btn-secondary {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-text-soft);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.btn-danger {
+    border-color: #f3c1c1;
+    background: #fff5f5;
+    color: var(--color-danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #fde8e8;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+/* FORM FIELDS */
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--color-text-soft);
+}
+
+.field select,
+.field input,
+.field textarea {
+    width: 100%;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 9px 12px;
+    font: inherit;
+    outline: none;
+    background: #fff;
+}
+
+.field select:focus,
+.field input:focus,
+.field textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+/* CARDS AND PANELS */
+.panel {
+    max-width: 900px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    padding: 20px;
+    margin-bottom: 18px;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    padding: 18px;
+}
+
+.card h3 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.card p {
+    margin: 0;
+    flex: 1 1 auto;
+    color: var(--color-text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* BADGES */
+.badge {
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 3px 10px;
+    background: var(--color-accent);
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* EMPTY STATES & STATUS MESSAGES */
+.empty-state {
+    max-width: 900px;
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-medium);
+    padding: 40px 25px;
+    text-align: center;
+    color: var(--color-text-muted);
+}
+
+.status-message {
+    margin-top: 12px;
+    font-size: 14px;
+    min-height: 20px;
+}
+
+.status-message.ok     { color: var(--color-success); }
+.status-message.error  { color: var(--color-danger); }
+
+.section-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.section-note {
+    margin-left: auto;
+    font-size: 13px;
+}
+
+
+/* ==========================================
+   ===  SECTION 4: READOUT (markdown bubbles / code / lists)
+   ========================================== */
+/* Shared rendering classes used inside chat bubbles and anywhere
+   message text is displayed. Safe DOM built by ui/markdown.js. */
+
+.readout {
+    color: var(--color-text-soft);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.readout p {
+    margin: 0 0 10px;
+}
+
+.readout p:last-child {
+    margin-bottom: 0;
+}
+
+.readout pre {
+    margin: 0 0 10px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+.readout pre code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+}
+
+.readout code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #eef2f6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+}
+
+.readout ul,
+.readout ol {
+    margin: 0 0 10px;
+    padding-left: 22px;
+}
+
+
+/* ==========================================
+   ===  SECTION 5: AGENT CARDS
+   ========================================== */
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    max-width: 1000px;
+}
+
+.agent-card-action {
+    margin-top: auto;
+}
+
+
+/* ==========================================
+   ===  SECTION 6: CHAT POPUP (floating chat window)
+   ========================================== */
+
+.chat-popup {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    width: min(420px, calc(100vw - 24px));
+    height: min(560px, calc(100vh - 48px));
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-modal);
+    overflow: hidden;
+}
+
+/* A launching button shown when the popup is closed (bottom-right). */
+.chat-launcher {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 60;
+}
+
+/* Header */
+.chat-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+.chat-header .avatar {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    font-size: 14px;
+}
+
+.chat-header-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.chat-header-info strong {
+    overflow: hidden;
+    font-size: 15px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.chat-header-info small {
+    color: var(--color-text-muted);
+    font-size: 12px;
+}
+
+.chat-header-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-header-actions button {
+    border: 0;
+    border-radius: var(--radius-small);
+    padding: 6px 10px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chat-header-actions button:hover {
+    background: #e2e8f0;
+    color: var(--color-primary);
+}
+
+.chat-header-actions button.danger:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+/* Scrolling bubbles */
+.chat-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--color-background);
+}
+
+.chat-welcome {
+    margin: auto;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 14px;
+}
+
+/* One bubble: a row [avatar | content] mirroring the old message layout */
+.bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 100%;
+}
+
+.bubble.user {
+    align-self: flex-end;
+    padding-left: clamp(0px, 6vw, 40px);
+}
+
+.bubble.agent {
+    align-self: flex-start;
+    padding-left: 4px;
+}
+
+.bubble-content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.bubble-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.bubble-header strong {
+    font-size: 13px;
+}
+
+.bubble-header span {
+    color: var(--color-text-faint);
+    font-size: 11px;
+}
+
+.bubble-body {
+    border-radius: var(--radius-medium);
+    padding: 10px 12px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    font-size: 14px;
+}
+
+.bubble.agent .bubble-body {
+    border-left: 3px solid var(--color-accent);
+    background: var(--color-surface);
+}
+
+.bubble.user .bubble-body {
+    background: #eaf3fc;
+}
+
+/* Avatar */
+.avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #374151;
+    font-weight: 700;
+}
+
+.avatar.agent-avatar {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+/* Typing indicator (pulsing dots) */
+.typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-text-faint);
+    animation: typing-pulse 1.2s infinite ease-in-out;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing-pulse {
+    0%, 60%, 100% { opacity: 0.25; }
+    30%           { opacity: 1; }
+}
+
+/* Input area */
+.chat-input-area {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+#chat-message-input {
+    display: block;
+    width: 100%;
+    min-height: 60px;
+    max-height: 160px;
+    resize: vertical;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 10px 12px;
+    outline: none;
+    font: inherit;
+    line-height: 1.5;
+}
+
+#chat-message-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.chat-input-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.chat-input-hint {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+.chat-save-status {
+    font-size: 12px;
+    min-height: 16px;
+}
+
+#chat-send-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+
+/* ==========================================
+   ===  SECTION 7: CONFIG panel
+   ========================================== */
+
+.config-note {
+    color: var(--color-text-muted);
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+
+/* ==========================================
+   ===  RESPONSIVE (mobile)
+   ========================================== */
+
+@media (max-width: 600px) {
+    .page {
+        padding: 18px 14px;
+    }
+
+    .chat-window-launcher {
+        right: 12px;
+        bottom: 12px;
+    }
+}
+
+
+/* ==========================================
+   ===  SECTION 8: CHAT WINDOW ENGINE (reusable pop-out chat)
+   ========================================== */
+/* Styles for js/classes/chat-window.js - the configuration-driven,
+   pop-out chat window. Class names are prefixed `cw-` (plus the root
+   `.chat-window`) so this component never collides with app styles.
+   This replaces the older static chat-popup markup that lived in
+   SECTION 6. A launcher button is created by the component, so no
+   chat markup is required in the page HTML. */
+
+:root {
+    /* CHAT WINDOW ENGINE tokens (map onto the app palette by default) */
+    --cw-bg: var(--color-surface);
+    --cw-header-bg: var(--color-surface-alt);
+    --cw-border: var(--color-border);
+    --cw-border-strong: var(--color-border-strong);
+    --cw-chat-bg: var(--color-background);
+    --cw-panel-bg: var(--color-surface);
+    --cw-text-muted: var(--color-text-muted);
+    --cw-user-bg: #eaf3fc;
+    --cw-accent: var(--color-primary);
+    --cw-header-height: 50px;
+    --cw-z-index: 90;
+}
+
+.cw-hidden {
+    display: none !important;
+}
+
+/* ---------- the floating window ---------- */
+
+.chat-window {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: var(--cw-z-index);
+    display: flex;
+    flex-direction: column;
+    width: 780px;
+    max-width: calc(100vw - 16px);
+    height: 560px;
+    max-height: calc(100vh - 16px);
+    min-width: 360px;
+    min-height: 460px;
+    border: 1px solid var(--cw-border);
+    border-radius: 14px;
+    background: var(--cw-bg);
+    box-shadow: var(--shadow-modal);
+    overflow: hidden;
+    font: inherit;
+}
+
+.chat-window.cw-dragging {
+    cursor: grabbing;
+    user-select: none;
+}
+
+/* ---------- header (also the drag handle) ---------- */
+
+.cw-window-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 12px;
+    height: var(--cw-header-height);
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--cw-border);
+    background: var(--cw-header-bg);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+.chat-window.cw-dragging .cw-window-header {
+    cursor: grabbing;
+}
+
+.cw-window-avatar {
+    display: flex;
+    flex: 0 0 32px;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+}
+
+.cw-window-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.cw-window-info strong {
+    overflow: hidden;
+    font-size: 15px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.cw-window-info small {
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.cw-window-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.cw-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-small);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+
+.cw-icon-btn:hover {
+    background: #e2e8f0;
+    color: var(--color-primary);
+}
+
+.cw-icon-btn.cw-close:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+/* ---------- body: chat area + right panel ---------- */
+
+.cw-window-body {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.cw-chat-area {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.cw-message-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--cw-chat-bg);
+}
+
+/* ---------- bubbles ---------- */
+
+.cw-bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 100%;
+}
+
+.cw-bubble.cw-user {
+    align-self: flex-end;
+    padding-left: clamp(0px, 6vw, 40px);
+}
+
+.cw-bubble.cw-assistant,
+.cw-bubble.cw-agent {
+    align-self: flex-start;
+    padding-left: 4px;
+}
+
+.cw-bubble-content {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.cw-bubble-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.cw-bubble-header strong {
+    font-size: 13px;
+}
+
+.cw-bubble-header span {
+    color: var(--color-text-faint);
+    font-size: 11px;
+}
+
+.cw-bubble-body {
+    border-radius: var(--radius-medium);
+    padding: 10px 12px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    font-size: 14px;
+}
+
+.cw-bubble.cw-user .cw-bubble-body {
+    background: var(--cw-user-bg);
+}
+
+.cw-bubble.cw-agent .cw-bubble-body {
+    border-left: 3px solid var(--cw-accent);
+}
+
+.cw-bubble.cw-system {
+    align-self: center;
+    max-width: 80%;
+}
+
+.cw-bubble.cw-system .cw-bubble-header {
+    display: none;
+}
+
+.cw-bubble.cw-system .cw-bubble-body {
+    padding: 6px 12px;
+    border: 1px dashed var(--cw-border-strong);
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    font-style: italic;
+    text-align: center;
+}
+
+.cw-bubble-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #374151;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.cw-bubble-avatar.cw-agent-avatar {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+/* ---------- welcome / typing ---------- */
+
+.cw-welcome {
+    margin: auto;
+    max-width: 320px;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 14px;
+}
+
+.cw-welcome h3 {
+    margin: 0 0 6px;
+    color: var(--color-text);
+    font-size: 17px;
+}
+
+.cw-welcome p {
+    margin: 0;
+}
+
+.cw-typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.cw-typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-text-faint);
+    animation: cw-typing-pulse 1.2s infinite ease-in-out;
+}
+
+.cw-typing span:nth-child(2) { animation-delay: 0.15s; }
+.cw-typing span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes cw-typing-pulse {
+    0%, 60%, 100% { opacity: 0.25; }
+    30%           { opacity: 1; }
+}
+
+/* ---------- right panel ---------- */
+
+.cw-panel {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    width: 300px;
+    border-left: 1px solid var(--cw-border);
+    background: var(--cw-panel-bg);
+}
+
+.cw-panel.cw-panel-hidden {
+    display: none;
+}
+
+.cw-panel-sections {
+    flex: 1 1 auto;
+    padding: 14px 16px 20px;
+    overflow-y: auto;
+}
+
+.cw-panel-drag {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    width: 8px;
+    z-index: 2;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.cw-panel-drag:hover {
+    background: rgba(7, 89, 133, 0.15);
+}
+
+.cw-panel-section {
+    margin-bottom: 14px;
+}
+
+.cw-panel-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--cw-border);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.cw-panel-section-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+}
+
+.cw-panel-section-toggle svg {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--color-text-faint);
+    transition: transform 0.15s ease;
+}
+
+.cw-panel-section.cw-collapsed .cw-panel-section-toggle svg {
+    transform: rotate(-90deg);
+}
+
+.cw-panel-section-body {
+    padding-top: 8px;
+}
+
+.cw-panel-section.cw-collapsed .cw-panel-section-body {
+    display: none;
+}
+
+/* panel fields */
+
+.cw-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: var(--color-text-soft);
+}
+
+.cw-field-label {
+    font-size: 12px;
+    color: var(--color-text-muted);
+}
+
+.cw-field-value {
+    padding: 6px 8px;
+    border: 1px solid var(--cw-border);
+    border-radius: var(--radius-small);
+    background: var(--color-surface-alt);
+    font-size: 13px;
+    color: var(--color-text-soft);
+}
+
+.cw-field input[type="text"],
+.cw-field select {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: #fff;
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+}
+
+.cw-field input:focus,
+.cw-field select:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.cw-field.cw-field-toggle {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.cw-switch {
+    position: relative;
+    flex: 0 0 auto;
+    width: 38px;
+    height: 22px;
+}
+
+.cw-switch input {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.cw-switch-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: #cbd5e1;
+    transition: background 0.15s ease;
+    pointer-events: none;
+}
+
+.cw-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition: transform 0.15s ease;
+}
+
+.cw-switch input:checked + .cw-switch-track {
+    background: var(--color-primary);
+}
+
+.cw-switch input:checked + .cw-switch-track::after {
+    transform: translateX(16px);
+}
+
+.cw-divider {
+    margin: 12px 0;
+    border: 0;
+    border-top: 1px solid var(--cw-border);
+}
+
+.cw-panel-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: var(--color-surface);
+    color: var(--color-text-soft);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.cw-panel-button:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.cw-panel-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ---------- composer ---------- */
+
+.cw-composer {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--cw-border);
+    background: var(--color-surface-alt);
+}
+
+.cw-save-status {
+    min-height: 16px;
+    font-size: 12px;
+}
+
+.cw-save-status.ok { color: var(--color-success); }
+.cw-save-status.error { color: var(--color-danger); }
+
+.cw-input {
+    display: block;
+    width: 100%;
+    min-height: 40px;
+    max-height: 160px;
+    padding: 9px 12px;
+    border: 1px solid var(--cw-border-strong);
+    border-radius: var(--radius-small);
+    background: #fff;
+    resize: none;
+    overflow-y: auto;
+    outline: none;
+    font: inherit;
+    line-height: 1.5;
+}
+
+.cw-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.cw-input:disabled {
+    opacity: 0.6;
+}
+
+.cw-composer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.cw-input-hint {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+/* ---------- launcher + resize handles ---------- */
+
+.chat-window-launcher {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: var(--cw-z-index);
+    box-shadow: var(--shadow-modal);
+}
+
+.cw-resize {
+    position: absolute;
+    z-index: 3;
+}
+
+.cw-resize-n { top: -3px; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+.cw-resize-s { bottom: -3px; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+.cw-resize-e { top: 8px; right: -3px; bottom: 8px; width: 8px; cursor: e-resize; }
+.cw-resize-w { top: 8px; left: -3px; bottom: 8px; width: 8px; cursor: w-resize; }
+.cw-resize-ne { top: -3px; right: -3px; width: 12px; height: 12px; cursor: ne-resize; }
+.cw-resize-nw { top: -3px; left: -3px; width: 12px; height: 12px; cursor: nw-resize; }
+.cw-resize-se { right: -3px; bottom: -3px; width: 12px; height: 12px; cursor: se-resize; }
+.cw-resize-sw { left: -3px; bottom: -3px; width: 12px; height: 12px; cursor: sw-resize; }
+
+/* ---------- minimized state ---------- */
+
+.chat-window.cw-minimized .cw-window-body,
+.chat-window.cw-minimized .cw-composer {
+    display: none;
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 600px) {
+    .chat-window {
+        right: 8px !important;
+        bottom: 8px !important;
+        left: 8px !important;
+        top: 8px !important;
+        width: auto !important;
+        height: auto !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        max-width: none !important;
+        max-height: none !important;
+    }
+
+    .cw-panel {
+        width: 240px !important;
+    }
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/app.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// js/app.js - ENTRY POINT (the only script index.html loads)
+// ==========================================
+// BOOT:
+//   1. Render the AI agent card grid (ui/agents.js)
+//   2. Render the Configuration section (ui/config.js)
+//   3. When an agent is picked, build a reusable ChatWindow
+//      (classes/chat-window.js) from a config object and wire the
+//      AI call. The ChatWindow ONLY renders; all AI/session/persist
+//      logic lives here.
+//
+// FOLDER MAP:
+//   js/app.js                        -> boot + wiring (this file)
+//   js/logic/                        -> pure logic (models, chat-formatter)
+//   js/classes/ChatSession.js        -> chat data model (no DOM)
+//   js/classes/chat-window.js        -> reusable pop-out chat engine
+//   js/api/                          -> every server call (api.js)
+//   js/ui/                           -> agents, config, config-form, markdown
+
+import { renderAgents } from "./ui/agents.js";
+import { renderConfig } from "./ui/config.js";
+import { ChatSession } from "./classes/ChatSession.js";
+import { ChatFactory } from "./classes/chat-window.js";
+import { renderMarkdown } from "./ui/markdown.js";
+import * as api from "./api/api.js";
+
+// ---- app-level state ----
+let settings = {};          // cached app settings (chatSavePath, defaults)
+let activeChat = null;      // the one visible ChatWindow (presentation)
+let activeSession = null;   // the one ChatSession (data + conversation)
+
+// ---- boot ----
+async function boot() {
+    // 1. Render agent cards.
+    await renderAgents({
+        containerId: "agent-cards",
+        statusId: "agent-status-area",
+        onSelect: onAgentSelected,
+    });
+
+    // 2. Render configuration.
+    await renderConfig({
+        mountId: "config-section",
+        onChanged: (updated) => {
+            settings = updated;
+        },
+    });
+}
+
+// ---- agent selection -> build + open a reusable ChatWindow ----
+function onAgentSelected(agent) {
+    if (activeChat) {
+        activeChat.destroy();
+    }
+
+    activeSession = new ChatSession({
+        agentId: agent.id,
+        agentName: agent.name,
+        model: settings.defaultModel || "",
+    });
+
+    const chat = ChatFactory.create(buildAgentConfig(agent));
+    activeChat = chat;
+
+    chat.onSend(handleSend);
+    chat.onAction("saveChat", handleSaveAction);
+
+    chat.open();
+}
+
+/**
+ * The entity config that drives the chat window for one AI agent.
+ * The right panel is generated fully from `sections` - no HTML edits
+ * needed to change an agent's controls/branding.
+ */
+function buildAgentConfig(agent) {
+    return {
+        id: agent.id,
+        type: "agent",
+        name: agent.name,
+        title: agent.name,
+        description: agent.description || "AI agent",
+        layout: { rightPanel: true, resizable: true, collapsible: true, panelWidth: 300 },
+        renderMarkdown,
+        sections: [
+            {
+                title: "Agent Information",
+                fields: [
+                    { type: "text", label: "Status", value: "Ready" },
+                    { type: "text", label: "Category", value: agent.mode || "General" },
+                ],
+            },
+            {
+                title: "Actions",
+                fields: [
+                    { type: "button", label: "Save chat", action: "saveChat" },
+                ],
+            },
+        ],
+    };
+}
+
+// ---- send flow (the ChatWindow already showed the user bubble) ----
+async function handleSend(text, chat) {
+    if (!activeSession) {
+        return;
+    }
+
+    activeSession.addUserMessage(text);
+    chat.setWaiting(true);
+
+    try {
+        const reply = await api.sendChat({
+            message: text,
+            agentId: activeSession.agentId,
+            model: activeSession.model,
+            history: activeSession.getApiHistory(),
+        });
+
+        activeSession.addAssistantMessage(reply);
+        chat.addAssistantMessage(reply, activeSession.agentName);
+        await autoSave();
+        chat.setSaveStatus("Chat saved.", "ok");
+    } catch (error) {
+        chat.addSystemMessage(`Sorry - that failed. ${error.message}`);
+        chat.setSaveStatus(`Send failed: ${error.message}`, "error");
+    } finally {
+        chat.setWaiting(false);
+    }
+}
+
+// ---- save handlers ----
+/**
+ * Auto-save after every assistant reply: keeps the .txt file as the
+ * source of truth for the active chat (chatSavePath from settings).
+ */
+async function autoSave() {
+    const session = activeSession;
+    if (!session || session.isEmpty || !activeChat) {
+        return;
+    }
+
+    const path = settings.chatSavePath || "data/chats";
+
+    try {
+        const result = await api.saveChatSession({
+            path,
+            fileName: session.transcriptFileName,
+            title: session.title,
+            agentName: session.agentName,
+            model: session.model,
+            content: session.transcript,
+        });
+        activeChat.setSaveStatus(`Saved: ${result.file}`, "ok");
+    } catch (error) {
+        console.warn("[app] auto-save failed:", error);
+        activeChat.setSaveStatus(`Save failed: ${error.message}`, "error");
+    }
+}
+
+/** "Save chat" action button in the window's right panel. */
+async function handleSaveAction() {
+    const session = activeSession;
+    if (!session || session.isEmpty) {
+        activeChat && activeChat.setSaveStatus("Nothing to save yet.", "error");
+        return;
+    }
+
+    const path = settings.chatSavePath || "data/chats";
+
+    try {
+        const result = await api.saveChatSession({
+            path,
+            fileName: session.transcriptFileName,
+            title: session.title,
+            agentName: session.agentName,
+            model: session.model,
+            content: session.transcript,
+        });
+        activeChat && activeChat.setSaveStatus(`Saved: ${result.file}`, "ok");
+    } catch (error) {
+        activeChat && activeChat.setSaveStatus(`Save failed: ${error.message}`, "error");
+    }
+}
+
+// ---- go ----
+boot();
+
+
+---------------------------------------------------------------------------
+FILE: static/js/api/api.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// api/api.js - THE ONLY FILE THAT TALKS TO THE SERVER
+// ==========================================
+// Every HTTP request in the app goes through this module. No other
+// file is allowed to call fetch() directly.
+//
+// ENDPOINTS USED:
+//   getModels()            -> GET  /api/models
+//   getAgents()            -> GET  /api/agents
+//   sendChat(...)          -> POST /api/chat
+//   loadAppSettings()      -> GET  /api/settings
+//   saveAppSettings(...)   -> POST /api/settings   (merges)
+//   saveChatSession(...)   -> POST /api/chat-save  (writes .txt file)
+
+// "" (default) -> requests go to the SAME origin serving this page.
+const API_BASE_URL = "";
+
+/**
+ * Low-level fetch helper: JSON in/out, readable error messages.
+ */
+async function request(path, options = {}) {
+    let response;
+
+    try {
+        response = await fetch(API_BASE_URL + path, {
+            headers: { "Content-Type": "application/json" },
+            ...options,
+        });
+    } catch (networkError) {
+        throw new Error(
+            `Cannot reach the server at "${API_BASE_URL || window.location.origin}". Is it running? (python server.py)`
+        );
+    }
+
+    if (!response.ok) {
+        throw new Error(`Server error ${response.status} for ${path}`);
+    }
+
+    return response.json();
+}
+
+/** Model list for dropdowns. Returns [] when no Ollama models. */
+export async function getModels() {
+    const data = await request("/api/models");
+    return data.models || [];
+}
+
+/** All discovered agents. Returns [] when agent_library/ is empty. */
+export async function getAgents() {
+    const data = await request("/api/agents");
+    return data.agents || [];
+}
+
+/**
+ * Send one chat message and return the reply text.
+ * The server is stateless - we send history along every time.
+ */
+export async function sendChat({ message, agentId = "", model = "", history = [] }) {
+    const data = await request("/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+            message,
+            model,
+            agent_id: agentId,
+            history,
+        }),
+    });
+    return data.reply;
+}
+
+/** Load the stored browser settings; {} when nothing saved yet. */
+export async function loadAppSettings() {
+    const data = await request("/api/settings");
+    return data.settings || {};
+}
+
+/** Merge partial settings into what's stored (the rest survives). */
+export async function saveAppSettings(partialSettings) {
+    const data = await request("/api/settings", {
+        method: "POST",
+        body: JSON.stringify(partialSettings),
+    });
+    return data.settings || {};
+}
+
+/**
+ * Save a chat session as a nicely-formatted .txt file on the server.
+ *
+ * The transcript + a suggested file name + the configured output path
+ * are all sent here and written by /api/chat-save.
+ */
+export async function saveChatSession({
+    path = "",
+    fileName = "",
+    title = "",
+    agentName = "",
+    model = "",
+    content = "",
+}) {
+    const result = await request("/api/chat-save", {
+        method: "POST",
+        body: JSON.stringify({ path, fileName, title, agentName, model, content }),
+    });
+
+    if (!result.saved) {
+        throw new Error(result.error || "The server refused to save the chat.");
+    }
+
+    return result; // { saved, file }
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/classes/ChatSession.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// classes/ChatSession.js - ONE CHAT SESSION (single source of truth)
+// ==========================================
+// There is only ONE ChatSession at a time in the whole app. It talks
+// to a single agent and owns:
+//   - the chosen agent + model
+//   - the full ordered list of messages
+//   - the session title (from the first user message)
+//   - helpers to send, receive, count and export the conversation
+//
+// It NEVER touches the DOM. Rendering/sending live in the reusable
+// chat-window.js engine (classes/chat-window.js).
+
+import {
+    createMessage,
+    buildApiHistory,
+} from "../logic/models.js";
+import {
+    buildTranscript,
+    buildTranscriptFileName,
+    countInteractions,
+} from "../logic/chat-formatter.js";
+
+export class ChatSession {
+    /**
+     * @param {object} opts
+     * @param {string} opts.agentId      - agent_library folder id
+     * @param {string} opts.agentName    - display name
+     * @param {string} opts.model        - ollama model id ("" = server default)
+     */
+    constructor({ agentId = "", agentName = "", model = "" } = {}) {
+        this.agentId = agentId;
+        this.agentName = agentName;
+        this.model = model;
+        this.title = "New chat";
+        this.messages = [];           // ordered list of message objects
+        this.startedAt = new Date().toISOString();
+        this.isWaiting = false;       // true while an LLM reply is pending
+    }
+
+    /** Empty when no messages yet. */
+    get isEmpty() {
+        return this.messages.length === 0;
+    }
+
+    /** True when this session is bound to a real agent. */
+    get hasAgent() {
+        return Boolean(this.agentId);
+    }
+
+    /**
+     * Add a user message. The first message titles the session
+     * (truncated to 50 chars). Returns the created message.
+     */
+    addUserMessage(text) {
+        const message = createMessage({ role: "user", author: "You", text });
+        this.messages.push(message);
+
+        if (this.messages.filter((m) => m.role === "user").length === 1) {
+            this.title = this._firstWords(text, 50);
+        }
+
+        return message;
+    }
+
+    /** Add the assistant reply. Returns the created message. */
+    addAssistantMessage(text, author = this.agentName || "AI") {
+        const message = createMessage({
+            role: "assistant",
+            author,
+            text: text || "(no reply)",
+        });
+        this.messages.push(message);
+        return message;
+    }
+
+    /**
+     * The list of turns sent to /api/chat: recent messages as
+     * [{ role, content }, ...] (max 20 to keep requests small).
+     */
+    getApiHistory() {
+        return buildApiHistory(this.messages);
+    }
+
+    /** Number of interactions between LLM and user (see formatter). */
+    get interactionCount() {
+        return countInteractions(this.messages);
+    }
+
+    /** Full .txt transcript body (date/title/interactions + messages). */
+    get transcript() {
+        return buildTranscript(this);
+    }
+
+    /** Suggested file name for the saved transcript. */
+    get transcriptFileName() {
+        return buildTranscriptFileName(this);
+    }
+
+    /** Human-friendly reset for a brand-new conversation with same agent. */
+    newChat() {
+        this.messages = [];
+        this.title = "New chat";
+        this.startedAt = new Date().toISOString();
+        this.isWaiting = false;
+    }
+
+    /* ---- private ---- */
+
+    _firstWords(text, maxChars) {
+        if (!text) {
+            return "New chat";
+        }
+        if (text.length <= maxChars) {
+            return text;
+        }
+        return text.slice(0, maxChars).trimEnd() + "...";
+    }
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/classes/chat-window.js
+---------------------------------------------------------------------------
+
+// ================================================================
+// classes/chat-window.js
+// REUSABLE POP-OUT AI CHAT WINDOW ENGINE
+// ================================================================
+// A self-contained, configuration-driven floating chat window. It is
+// fully independent from any AI backend: the calling app registers a
+// "send" handler plus per-action handlers, and this component only
+// renders, drags, resizes, and emits events.
+//
+//   import { ChatFactory } from "./classes/chat-window.js";
+//
+//   const chat = ChatFactory.create({ name, sections, ... });
+//   chat.onSend((text, chat) => { /* call your AI / store */ });
+//   chat.onAction("savePlan", () => { /* do something */ });
+//   chat.open();
+//
+// RESPONSIBILITY SPLIT (intentional):
+//   chat-window.js  -> rendering, DOM, layout, drag/resize, events
+//   the app         -> AI calls, session state, persistence, agent logic
+//
+// Every DOM class is prefixed with `cw-` so this component can be copied
+// into any project without colliding with existing styles. Its CSS lives
+// in styles.css under "SECTION 8: CHAT WINDOW ENGINE".
+//
+// Supported message roles: user | assistant | agent | system - each
+// rendered with its own bubble styling.
+
+/* ================================================================
+   1. UTILITY FUNCTIONS
+   ================================================================ */
+
+/** Create a DOM element with a few convenient options. */
+function createElement(tag, options = {}) {
+    const element = document.createElement(tag);
+    if (options.className) {
+        element.className = options.className;
+    }
+    if (options.text !== undefined && options.text !== null) {
+        element.textContent = options.text;
+    }
+    if (options.title) {
+        element.title = options.title;
+    }
+    if (options.placeholder) {
+        element.placeholder = options.placeholder;
+    }
+    if (options.ariaLabel) {
+        element.setAttribute("aria-label", options.ariaLabel);
+    }
+    if (options.dataset) {
+        Object.assign(element.dataset, options.dataset);
+    }
+    return element;
+}
+
+/** Small labelled button (used by the right panel). */
+function createButton(label, onClick, className = "cw-panel-button") {
+    const button = createElement("button", { className: className, text: label });
+    button.type = "button";
+    if (typeof onClick === "function") {
+        button.addEventListener("click", onClick);
+    }
+    return button;
+}
+
+/** Small text input helper. */
+function createInput(attrs = {}) {
+    const input = document.createElement("input");
+    if (attrs.type) {
+        input.type = attrs.type;
+    }
+    if (attrs.name) {
+        input.name = attrs.name;
+    }
+    if (attrs.placeholder) {
+        input.placeholder = attrs.placeholder;
+    }
+    if (attrs.value !== undefined && attrs.value !== null) {
+        input.value = attrs.value;
+    }
+    return input;
+}
+
+/** Build a <select> from [{value,label}] or ["plain","strings"]. */
+function createSelect(options = [], selected = "") {
+    const select = document.createElement("select");
+    options.forEach((option) => {
+        const opt = document.createElement("option");
+        if (option && typeof option === "object") {
+            opt.value = option.value !== undefined ? option.value : option.label;
+            opt.textContent = option.label !== undefined ? option.label : option.value;
+        } else {
+            opt.value = option;
+            opt.textContent = option;
+        }
+        if (String(opt.value) === String(selected)) {
+            opt.selected = true;
+        }
+        select.appendChild(opt);
+    });
+    return select;
+}
+
+/** Clamp a number into [min, max]. Safe when min > max (tiny screens). */
+function clampValue(value, min, max) {
+    value = Number(value);
+    if (min > max) {
+        return value;
+    }
+    return Math.min(Math.max(value, min), max);
+}
+
+/** First letters of a name for the avatar, e.g. "Planner Agent" -> "PA". */
+function initials(name) {
+    if (!name) {
+        return "";
+    }
+    const words = String(name).trim().split(/\s+/).filter(Boolean);
+    if (words.length >= 2) {
+        return (words[0][0] + words[1][0]).toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+}
+
+/** Short unique id, e.g. "msg-l8x2p9k3f". */
+function makeId(prefix = "id") {
+    return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Friendly time: today -> "14:05", else "Jun 3, 14:05". */
+function formatTime(isoString) {
+    const date = isoString ? new Date(isoString) : new Date();
+    const now = new Date();
+    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (date.toDateString() === now.toDateString()) {
+        return time;
+    }
+    return `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
+/**
+ * Inline SVG icon set (Feather-style). Returns an <svg> element.
+ * Markup is developer-authored constants (never user input), so the
+ * innerHTML here is safe.
+ */
+const ICON_PATHS = {
+    close: '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>',
+    minus: '<line x1="5" y1="12" x2="19" y2="12"></line>',
+    panel: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="15" y1="3" x2="15" y2="21"></line>',
+    chevronDown: '<polyline points="4 7 12 15 20 7"></polyline>',
+    chevronUp: '<polyline points="18 15 12 7 6 15"></polyline>',
+    send: '<line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>',
+};
+
+function createIcon(name, size = 14) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", String(size));
+    svg.setAttribute("height", String(size));
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.innerHTML = ICON_PATHS[name] || "";
+    return svg;
+}
+
+/**
+ * Default markdown renderer. chat-window.js is self-contained, so the
+ * built-in renderer only shows plain text. Pass `renderMarkdown` in the
+ * config (or call `setMarkdownRenderer`) to plug in a real parser.
+ */
+function defaultRenderMarkdown(text) {
+    const p = document.createElement("p");
+    p.textContent = text ?? "";
+    return p;
+}
+
+// ================================================================
+//   2. RIGHT PANEL
+// ================================================================
+// The reusable side panel. Sections + fields are generated dynamically
+// from the entity's config object - never hardcoded for one AI agent.
+// It can be hidden and resized horizontally via a small drag handle.
+
+const PANEL_MIN_WIDTH = 190;
+
+class RightPanel {
+    /**
+     * @param {object} config   - { width?, sections? }
+     * @param {ChatWindow} chatWindow - back-reference for actions/limits
+     */
+    constructor(config, chatWindow) {
+        this.config = config;
+        this.chatWindow = chatWindow;
+        this.sections = config.sections || [];
+        this.element = null;
+        this.isVisible = true;
+        this._handlers = { onAction: null, onToggle: null, onInput: null };
+    }
+
+    /** Register a named callback used by the generated controls. */
+    setHandler(name, fn) {
+        this._handlers[name] = typeof fn === "function" ? fn : null;
+    }
+
+    /** Build the whole panel: sections from config + a drag handle. */
+    create() {
+        const panel = createElement("aside", { className: "cw-panel" });
+        panel.style.width = `${clampValue(this.config.width || 300, PANEL_MIN_WIDTH, 700)}px`;
+        this.element = panel;
+
+        this.renderSections();
+
+        if (this.chatWindow.layout.resizable) {
+            const handle = createElement("div", {
+                className: "cw-panel-drag",
+                title: "Drag to resize the panel",
+            });
+            panel.appendChild(handle);
+            this._bindDrag(handle);
+        }
+
+        return panel;
+    }
+
+    /** Rebuild all sections (used at creation time). */
+    renderSections() {
+        if (!this.element) {
+            return;
+        }
+        const wrapper = this.element.querySelector(".cw-panel-sections");
+        if (wrapper) {
+            wrapper.remove();
+        }
+        const shell = createElement("div", { className: "cw-panel-sections" });
+        this.sections.forEach((section) => shell.appendChild(this.createSection(section)));
+        this.element.appendChild(shell);
+    }
+
+    /** One section = optional collapse header + a list of fields. */
+    createSection(section) {
+        const box = createElement("section", { className: "cw-panel-section" });
+
+        const head = createElement("div", { className: "cw-panel-section-head" });
+        const title = createElement("span", { text: section.title || "" });
+
+        if (section.collapsible) {
+            const button = createElement("button", {
+                className: "cw-panel-section-toggle",
+                title: "Toggle section",
+            });
+            button.type = "button";
+            button.appendChild(title);
+            button.appendChild(createIcon("chevronDown", 13));
+            button.addEventListener("click", () => box.classList.toggle("cw-collapsed"));
+            head.appendChild(button);
+        } else {
+            head.appendChild(title);
+        }
+
+        const body = createElement("div", { className: "cw-panel-section-body" });
+        (section.fields || []).forEach((field) => body.appendChild(this.createField(field)));
+
+        box.appendChild(head);
+        box.appendChild(body);
+        return box;
+    }
+
+    /** Dispatch a single config field to the matching builder. */
+    createField(field) {
+        switch (field.type || "text") {
+        case "text":
+            return this._fieldText(field);
+        case "input":
+            return this._fieldInput(field);
+        case "select":
+            return this._fieldSelect(field);
+        case "toggle":
+            return this._fieldToggle(field);
+        case "button":
+            return this._fieldButton(field);
+        case "divider":
+            return createElement("hr", { className: "cw-divider" });
+        default:
+            return this._fieldText(field);
+        }
+    }
+
+    /* ---------- field builders ---------- */
+
+    _fieldText(field) {
+        const row = createElement("div", { className: "cw-field cw-field-text" });
+        if (field.label) {
+            row.appendChild(createElement("span", { className: "cw-field-label", text: field.label }));
+        }
+        row.appendChild(createElement("span", {
+            className: "cw-field-value",
+            text: field.value !== undefined && field.value !== null ? field.value : "—",
+        }));
+        return row;
+    }
+
+    _fieldInput(field) {
+        const wrap = createElement("div", { className: "cw-field cw-field-input" });
+        if (field.label) {
+            wrap.appendChild(createElement("label", { className: "cw-field-label", text: field.label }));
+        }
+        const input = createInput({ type: "text", placeholder: field.placeholder || "" });
+        if (field.value !== undefined && field.value !== null) {
+            input.value = field.value;
+        }
+        if (field.name) {
+            input.dataset.name = field.name;
+        }
+        input.addEventListener("input", () => this._emit("onInput", field, input.value));
+        wrap.appendChild(input);
+        return wrap;
+    }
+
+    _fieldSelect(field) {
+        const wrap = createElement("div", { className: "cw-field cw-field-select" });
+        if (field.label) {
+            wrap.appendChild(createElement("label", { className: "cw-field-label", text: field.label }));
+        }
+        const select = createSelect(field.options || [], field.value);
+        if (field.name) {
+            select.dataset.name = field.name;
+        }
+        select.addEventListener("change", () => this._emit("onInput", field, select.value));
+        wrap.appendChild(select);
+        return wrap;
+    }
+
+    _fieldToggle(field) {
+        const row = createElement("div", { className: "cw-field cw-field-toggle" });
+        if (field.label) {
+            row.appendChild(createElement("span", { className: "cw-field-label", text: field.label }));
+        }
+        const label = createElement("label", { className: "cw-switch" });
+        const checkbox = createInput({ type: "checkbox" });
+        checkbox.checked = Boolean(field.value);
+        if (field.name) {
+            checkbox.dataset.name = field.name;
+        }
+        checkbox.addEventListener("change", () => this._emit("onToggle", field, checkbox.checked));
+        label.appendChild(checkbox);
+        label.appendChild(createElement("span", { className: "cw-switch-track" }));
+        row.appendChild(label);
+        return row;
+    }
+
+    _fieldButton(field) {
+        const button = createButton(field.label || "Action", () => {
+            // Route through the parent so app-registered handlers fire.
+            this.chatWindow.triggerAction(field.action);
+        });
+        if (field.title) {
+            button.title = field.title;
+        }
+        if (field.disabled) {
+            button.disabled = true;
+        }
+        button.dataset.action = field.action || "";
+        return button;
+    }
+
+    /* ---------- helpers ---------- */
+
+    _emit(name, ...args) {
+        if (typeof this._handlers[name] === "function") {
+            this._handlers[name](...args);
+        }
+    }
+
+    /** Show or hide the whole panel (the chat area expands automatically). */
+    setVisible(visible) {
+        this.isVisible = Boolean(visible);
+        if (this.element) {
+            this.element.classList.toggle("cw-panel-hidden", !this.isVisible);
+        }
+    }
+
+    /** Toggle visibility; returns the new visible state. */
+    toggle() {
+        this.setVisible(!this.isVisible);
+        return this.isVisible;
+    }
+
+    /** Collect the current value of every control that has a `name`. */
+    getValues() {
+        const values = {};
+        if (!this.element) {
+            return values;
+        }
+        this.element.querySelectorAll("[data-name]").forEach((node) => {
+            if (node.type === "checkbox") {
+                values[node.dataset.name] = node.checked;
+            } else {
+                values[node.dataset.name] = node.value;
+            }
+        });
+        return values;
+    }
+
+    /**
+     * Horizontal resize: dragging the handle changes the panel width.
+     * The chat area is a flex sibling, so it fills the freed space.
+     */
+    _bindDrag(handle) {
+        handle.style.touchAction = "none";
+        handle.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            const startX = event.clientX;
+            const startWidth = this.element.getBoundingClientRect().width;
+            const maxWidth = Math.max(
+                PANEL_MIN_WIDTH,
+                this.chatWindow.element.getBoundingClientRect().width * 0.45
+            );
+
+            const onMove = (moveEvent) => {
+                const nextWidth = clampValue(
+                    startWidth - (moveEvent.clientX - startX),
+                    PANEL_MIN_WIDTH,
+                    maxWidth
+                );
+                this.element.style.width = `${nextWidth}px`;
+            };
+            const onUp = () => {
+                document.r                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+            };
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+        });
+    }
+}
+
+// ================================================================
+//   3. CHAT WINDOW
+// ================================================================
+// The main controller. Owns one complete chat instance: the pop-out
+// window, header, message list, composer, right panel, dragging,
+// resizing and the event/action system. It contains NO AI logic.
+
+const WINDOW_MIN_WIDTH = 360;
+const WINDOW_MIN_HEIGHT = 460;
+const VIEWPORT_MARGIN = 8;
+
+class ChatWindow {
+    constructor(config = {}) {
+        this.config = config;
+
+        this.id = config.id || makeId("chat");
+        this.type = config.type || "agent";
+        this.name = config.name || "Assistant";
+        this.title = config.title || this.name;
+        this.description = config.description || "";
+        this.meta = config.meta || {};
+
+        this.layout = {
+            rightPanel: config.layout ? config.layout.rightPanel !== false : true,
+            resizable: config.layout ? config.layout.resizable !== false : true,
+            collapsible: config.layout ? config.layout.collapsible !== false : true,
+            width: (config.layout && config.layout.width) || 780,
+            height: (config.layout && config.layout.height) || 560,
+            panelWidth: (config.layout && config.layout.panelWidth) || 300,
+        };
+        this.sections = config.sections || [];
+
+        this.messages = [];
+        this.isOpen = false;
+        this.isMinimized = false;
+        this.isWaiting = false;
+        this.isPanelVisible = this.layout.rightPanel;
+
+        this.actionHandlers = {};
+        this.sendHandler = null;
+        this.toggleHandler = null;
+        this.renderMarkdown =
+            typeof config.renderMarkdown === "function"
+                ? config.renderMarkdown
+                : defaultRenderMarkdown;
+
+        this.element = null;      // .chat-window (the pop-up; fixed position)
+        this.launcher = null;     // floating button shown when closed
+        this.panel = null;        // RightPanel instance
+
+        // Cache DOM refs we touch in the hot paths.
+        this._messageBody = null;
+        this._input = null;
+        this._sendButton = null;
+        this._saveStatus = null;
+        this._panelBtn = null;
+        this._minBtn = null;
+        this._typingEl = null;
+        this._welcomeEl = null;
+        this._sizeBeforeMinimize = null;
+
+        this._build();
+    }
+
+    /* ---------- DOM construction ---------- */
+
+    _build() {
+        const root = createElement("div", { className: "chat-window cw-hidden" });
+        root.style.width = `${this.layout.width}px`;
+        root.style.height = `${this.layout.height}px`;
+
+        root.appendChild(this._buildHeader());
+        root.appendChild(this._buildBody());
+        root.appendChild(this._buildComposer());
+
+        if (this.layout.resizable) {
+            this._attachResizeHandles(root);
+        }
+
+        this.element = root;
+        document.body.appendChild(root);
+
+        this.launcher = this._buildLauncher();
+        document.body.appendChild(this.launcher);
+
+        this._bindWindow();
+        this._renderWelcome();
+    }
+
+    _buildHeader() {
+        const header = createElement("header", { className: "cw-window-header" });
+
+        this._avatar = createElement("div", { className: "cw-window-avatar" });
+        this._avatar.textContent = initials(this.name);
+        header.appendChild(this._avatar);
+
+        const info = createElement("div", { className: "cw-window-info" });
+        this._nameEl = createElement("strong", { text: this.name });
+        this._subEl = createElement("small", {
+            text: this.title || this.description || this.type,
+        });
+        info.appendChild(this._nameEl);
+        info.appendChild(this._subEl);
+
+        const actions = createElement("div", { className: "cw-window-actions" });
+
+        if (this.layout.rightPanel && this.layout.collapsible) {
+            this._panelBtn = createElement("button", {
+                className: "cw-icon-btn",
+                title: "Show or hide the side panel",
+                ariaLabel: "Toggle side panel",
+            });
+            this._panelBtn.type = "button";
+            this._panelBtn.setAttribute("aria-pressed", String(this.isPanelVisible));
+            this._panelBtn.appendChild(createIcon("panel"));
+            actions.appendChild(this._panelBtn);
+        }
+
+        this._minBtn = createElement("button", {
+            className: "cw-icon-btn",
+            title: "Minimize",
+            ariaLabel: "Minimize window",
+        });
+        this._minBtn.type = "button";
+        this._minBtn.appendChild(createIcon("minus"));
+        actions.appendChild(this._minBtn);
+
+        const closeBtn = createElement("button", {
+            className: "cw-icon-btn cw-close",
+            title: "Close",
+            ariaLabel: "Close window",
+        });
+        closeBtn.type = "button";
+        closeBtn.appendChild(createIcon("close"));
+        actions.appendChild(closeBtn);
+
+        header.appendChild(info);
+        header.appendChild(actions);
+        return header;
+    }
+
+    _buildBody() {
+        const body = createElement("div", { className: "cw-window-body" });
+
+        const chatArea = createElement("div", { className: "cw-chat-area" });
+        this._messageBody = createElement("div", { className: "cw-message-body" });
+        chatArea.appendChild(this._messageBody);
+        body.appendChild(chatArea);
+
+        if (this.layout.rightPanel) {
+            this.panel = new RightPanel(
+                { width: this.layout.panelWidth, sections: this.sections },
+                this
+            );
+            body.appendChild(this.panel.create());
+        }
+
+        return body;
+    }
+
+    _buildComposer() {
+        const composer = createElement("div", { className: "cw-composer" });
+
+        this._saveStatus = createElement("div", { className: "cw-save-status" });
+
+        this._input = document.createElement("textarea");
+        this._input.className = "cw-input";
+        this._input.placeholder = `Message ${this.name}...`;
+        this._input.setAttribute("aria-label", "Message");
+        this._input.rows = 1;
+
+        const row = createElement("div", { className: "cw-composer-row" });
+        row.appendChild(createElement("span", {
+            className: "cw-input-hint",
+            text: "Enter sends - Shift + Enter adds a new line",
+        }));
+
+        this._sendButton = createElement("button", {
+            className: "btn btn-primary cw-send",
+            text: "Send",
+        });
+        this._sendButton.type = "button";
+
+        row.appendChild(this._sendButton);
+        composer.appendChild(this._saveStatus);
+        composer.appendChild(this._input);
+        composer.appendChild(row);
+        return composer;
+    }
+
+    _buildLauncher() {
+        const button = createElement("button", {
+            className: "btn btn-primary chat-window-launcher cw-hidden",
+            text: `Open ${this.name}`,
+        });
+        button.type = "button";
+        return button;
+    }
+
+    /** Eight thin edge strips that resize the whole window. */
+    _attachResizeHandles(root) {
+        ["n", "s", "e", "w", "ne", "nw", "se", "sw"].forEach((edge) => {
+            const handle = createElement("div", {
+                className: `cw-resize cw-resize-${edge}`,
+                title: `Resize (${edge})`,
+            });
+            handle.style.touchAction = "none";
+            handle.addEventListener("pointerdown", (event) => this._beginResize(edge, event));
+            root.appendChild(handle);
+        });
+    }
+
+    /* ---------- public API ---------- */
+
+    /** Show the window (creates the launcher automatically on first build). */
+    open() {
+        if (!this.element) {
+            return;
+        }
+        this.isOpen = true;
+        this.element.classList.remove("cw-hidden");
+        if (this.launcher) {
+            this.launcher.classList.add("cw-hidden");
+        }
+        this._keepInViewport();
+
+        // On small screens the panel collapses out of the way.
+        if (window.innerWidth <= 600 && this.layout.collapsible && this.isPanelVisible) {
+            this.togglePanel(false);
+        }
+
+        this._renderWelcome();
+        if (this._input) {
+            this._input.focus();
+        }
+    }
+
+    /** Hide the window and show the launcher button again. */
+    close() {
+        this.isOpen = false;
+        this.isMinimized = false;
+        if (this.element) {
+            this.element.classList.add("cw-hidden");
+            this.element.classList.remove("cw-minimized");
+        }
+        if (this.launcher) {
+            this.launcher.classList.remove("cw-hidden");
+        }
+    }
+
+    /** Minimize to a header bar, or restore the previous size. */
+    minimize() {
+        if (this.isMinimized) {
+            this.isMinimized = false;
+            this.element.classList.remove("cw-minimized");
+            if (this._sizeBeforeMinimize) {
+                const s = this._sizeBeforeMinimize;
+                this.element.style.width = `${s.width}px`;
+                this.element.style.height = `${s.height}px`;
+                this.element.style.left = `${s.left}px`;
+                this.element.style.top = `${s.top}px`;
+            }
+            if (this._minBtn) {
+                this._minBtn.title = "Minimize";
+            }
+            if (this._input) {
+                this._input.focus();
+            }
+        } else {
+            const rect = this.element.getBoundingClientRect();
+            this._sizeBeforeMinimize = {
+                width: rect.width,
+                height: rect.height,
+                left: rect.left,
+                top: rect.top,
+            };
+            this.isMinimized = true;
+            this.element.classList.add("cw-minimized");
+            this.element.style.height = "var(--cw-header-height)";
+            if (this._minBtn) {
+                this._minBtn.title = "Restore";
+            }
+        }
+    }
+
+    /** Show/hide the right panel (chat area fills the freed space). */
+    togglePanel(force) {
+        if (!this.layout.rightPanel || !this.panel) {
+            return;
+        }
+        const show = typeof force === "boolean" ? force : !this.isPanelVisible;
+        this.isPanelVisible = show;
+        this.panel.setVisible(show);
+        if (this._panelBtn) {
+            this._panelBtn.setAttribute("aria-pressed", String(show));
+            this._panelBtn.title = show ? "Hide the side panel" : "Show the side panel";
+        }
+        if (typeof this.toggleHandler === "function") {
+            this.toggleHandler(show);
+        }
+    }
+
+    /**
+     * Append an arbitrary message object and render its bubble.
+     * Shape: { id?, role, author?, content/text, timestamp? }
+     * Returns the normalized stored message.
+     */
+    addMessage(message) {
+        const normalized = {
+            id: message.id || makeId("msg"),
+            role: message.role || "assistant",
+            author: message.author || (message.role === "user" ? "You" : this.name),
+            content: message.content !== undefined ? message.content : (message.text ?? ""),
+            timestamp: message.timestamp || new Date(),
+        };
+        this.messages.push(normalized);
+        this._removeWelcome();
+        if (this._messageBody) {
+            this._messageBody.appendChild(this._buildBubble(normalized));
+        }
+        this.scrollToBottom();
+        return normalized;
+    }
+
+    addUserMessage(text) {
+        return this.addMessage({ role: "user", author: "You", content: text });
+    }
+
+    addAssistantMessage(text, author = this.name) {
+        return this.addMessage({ role: "assistant", author: author, content: text });
+    }
+
+    addSystemMessage(text) {
+        return this.addMessage({ role: "system", author: "System", content: text });
+    }
+
+    /** Clear every message and restore the welcome state. */
+    clearMessages() {
+        this.messages = [];
+        if (this._messageBody) {
+            this._messageBody.replaceChildren();
+        }
+        this._renderWelcome();
+    }
+
+    /** Enable/disable the composer and show/hide the typing indicator. */
+    setWaiting(waiting) {
+        this.isWaiting = Boolean(waiting);
+        if (this._input) {
+            this._input.disabled = this.isWaiting;
+        }
+        if (this._sendButton) {
+            this._sendButton.disabled = this.isWaiting;
+        }
+        if (this.isWaiting) {
+            this._showTyping();
+        } else {
+            this._removeTyping();
+        }
+    }
+
+    /** Small inline status line above the composer. */
+    setSaveStatus(text, kind = "") {
+        if (!this._saveStatus) {
+            return;
+        }
+        this._saveStatus.textContent = text || "";
+        this._saveStatus.className = text
+            ? `cw-save-status ${kind}`
+            : "cw-save-status";
+    }
+
+    /** Scroll the message list to the newest bubble. */
+    scrollToBottom() {
+        if (this._messageBody) {
+            this._messageBody.scrollTop = this._messageBody.scrollHeight;
+        }
+    }
+
+    /** Register the handler called with each sent message. */
+    onSend(callback) {
+        this.sendHandler = typeof callback === "function" ? callback : null;
+    }
+
+    /** Register a handler for one action name from the right panel. */
+    onAction(action, callback) {
+        if (typeof action === "object") {
+            Object.entries(action).forEach(([name, fn]) => this.onAction(name, fn));
+            return this;
+        }
+        this.actionHandlers[action] = typeof callback === "function" ? callback : null;
+        return this;
+    }
+
+    /** Optional hook fired when the right panel is shown/hidden. */
+    onTogglePanel(callback) {
+        this.toggleHandler = typeof callback === "function" ? callback : null;
+    }
+
+    /** Replace the markdown renderer after construction. */
+    setMarkdownRenderer(fn) {
+        this.renderMarkdown = typeof fn === "function" ? fn : defaultRenderMarkdown;
+    }
+
+    /** Current values of panel controls that have a `name`. */
+    getPanelValues() {
+        return this.panel ? this.panel.getValues() : {};
+    }
+
+    /** Fire an action that was configured on a panel button. */
+    triggerAction(action) {
+        const handler = this.actionHandlers[action];
+        if (typeof handler === "function") {
+            handler(action, this, this.getPanelValues());
+        }
+    }
+
+    /** Remove the window and launcher from the DOM entirely. */
+    destroy() {
+        if (this.element) {
+            this.element.remove();
+        }
+        if (this.launcher) {
+            this.launcher.remove();
+        }
+        this.element = null;
+        this.launcher = null;
+        this.panel = null;
+    }
+
+    /* ---------- composition ---------- */
+
+    _autogrow() {
+        const el = this._input;
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    }
+
+    send() {
+        const text = this._input.value.trim();
+        if (!text || this.isWaiting) {
+            return;
+        }
+        this._input.value = "";
+        this._autogrow();
+
+        // Presentation side: show the user bubble immediately.
+        this.addUserMessage(text);
+
+        if (typeof this.sendHandler === "function") {
+            this.sendHandler(text, this);
+        } else {
+            this.addSystemMessage("No send handler is registered for this chat window.");
+        }
+    }
+
+    /* ---------- internal wiring ---------- */
+
+    _bindWindow() {
+        window.addEventListener("resize", () => {
+            if (this.isOpen) {
+                this._keepInViewport();
+            }
+        });
+
+        if (this._panelBtn) {
+            this._panelBtn.addEventListener("click", () => this.togglePanel());
+        }
+        if (this._minBtn) {
+            this._minBtn.addEventListener("click", () => this.minimize());
+        }
+        const closeBtn = this.element.querySelector(".cw-close");
+        if (closeBtn) {
+            closeBtn.addEventListener("click", () => this.close());
+        }
+        if (this.launcher) {
+            this.launcher.addEventListener("click", () => this.open());
+        }
+
+        const header = this.element.querySelector(".cw-window-header");
+        if (header) {
+            this._bindDragHeader(header);
+        }
+
+        if (this._sendButton) {
+            this._sendButton.addEventListener("click", () => this.send());
+        }
+        if (this._input) {
+            this._input.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    this.send();
+                }
+            });
+            this._input.addEventListener("input", () => this._autogrow());
+        }
+    }
+
+/* ---------- dragging / resizing ---------- */
+
+    /** Drag the whole window by its header (ignores the action buttons). */
+    _bindDragHeader(header) {
+        header.style.touchAction = "none";
+        header.addEventListener("pointerdown", (event) => {
+            if (event.target.closest(".cw-window-actions")) {
+                return; // let the buttons work normally
+            }
+            event.preventDefault();
+
+            const rect = this.element.getBoundingClientRect();
+            const startX = event.clientX;
+            const startY = event.clientY;
+            const startLeft = rect.left;
+            const startTop = rect.top;
+            const width = rect.width;
+            const height = rect.height;
+
+            this.element.classList.add("cw-dragging");
+
+            const onMove = (moveEvent) => {
+                const left = clampValue(
+                    startLeft + (moveEvent.clientX - startX),
+                    VIEWPORT_MARGIN,
+                    Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN)
+                );
+                const top = clampValue(
+                    startTop + (moveEvent.clientY - startY),
+                    VIEWPORT_MARGIN,
+                    Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN)
+                );
+                this.element.style.left = `${left}px`;
+                this.element.style.top = `${top}px`;
+            };
+            const onUp = () => {
+                document.removeEventListener("pointermove", onMove);
+                document.removeEventListener("pointerup", onUp);
+                this.element.classList.remove("cw-dragging");
+            };
+
+            document.addEventListener("pointermove", onMove);
+            document.addEventListener("pointerup", onUp);
+        });
+    }
+
+    /**
+     * Resize the window from one of its 8 edges. Width/height are
+     * clamped to the configured minimums and the viewport; the window
+     * is also nudged back if it would slide off-screen.
+     */
+    _beginResize(edge, event) {
+        event.preventDefault();
+
+        const hasN = edge.includes("n");
+        const hasS = edge.includes("s");
+        const hasE = edge.includes("e");
+        const hasW = edge.includes("w");
+
+        const rect = this.element.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const start = { w: rect.width, h: rect.height, left: rect.left, top: rect.top };
+
+        const onMove = (moveEvent) => {
+            const dx = moveEvent.clientX - startX;
+            const dy = moveEvent.clientY - startY;
+
+            let w = start.w;
+            let h = start.h;
+            let left = start.left;
+            let top = start.top;
+
+            if (hasE) {
+                w = start.w + dx;
+            }
+            if (hasW) {
+                w = start.w - dx;
+            }
+            if (hasS) {
+                h = start.h + dy;
+            }
+            if (hasN) {
+                h = start.h - dy;
+            }
+
+            w = clampValue(w, WINDOW_MIN_WIDTH, window.innerWidth - 16);
+            h = clampValue(h, WINDOW_MIN_HEIGHT, window.innerHeight - 16);
+            if (hasN) {
+                top = start.top + (start.h - h);
+            }
+            if (hasW) {
+                left = start.left + (start.w - w);
+            }
+
+            this.element.style.width = `${w}px`;
+            this.element.style.height = `${h}px`;
+            this.element.style.left = `${clampValue(left, VIEWPORT_MARGIN, Math.max(VIEWPORT_MARGIN, window.innerWidth - w - VIEWPORT_MARGIN))}px`;
+            this.element.style.top = `${clampValue(top, VIEWPORT_MARGIN, Math.max(VIEWPORT_MARGIN, window.innerHeight - h - VIEWPORT_MARGIN))}px`;
+        };
+
+        const onUp = () => {
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+        };
+
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+    }
+
+    /** Keep the window fully inside the viewport (after open/resize). */
+    _keepInViewport() {
+        if (!this.element) {
+            return;
+        }
+        const rect = this.element.getBoundingClientRect();
+        const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - rect.width - VIEWPORT_MARGIN);
+        const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - rect.height - VIEWPORT_MARGIN);
+        this.element.style.left = `${clampValue(rect.left, VIEWPORT_MARGIN, maxLeft)}px`;
+        this.element.style.top = `${clampValue(rect.top, VIEWPORT_MARGIN, maxTop)}px`;
+    }
+
+    /* ---------- message rendering ---------- */
+
+    _buildBubble(message) {
+        const role = message.role || "assistant";
+        const bubble = createElement("div", {
+            className: `cw-bubble cw-${role}`,
+            dataset: { messageId: message.id },
+        });
+
+        // System notices have no avatar; everything else does.
+        if (role !== "system") {
+            const avatar = createElement("div", {
+                className: `cw-bubble-avatar ${role === "user" ? "cw-user-avatar" : "cw-agent-avatar"}`,
+            });
+            avatar.textContent = role === "user" ? "U" : initials(message.author || this.name);
+            bubble.appendChild(avatar);
+        }
+
+        const content = createElement("div", { className: "cw-bubble-content" });
+
+        const head = createElement("div", { className: "cw-bubble-header" });
+        const name = createElement("strong", {
+            text: message.author || (role === "user" ? "You" : this.name),
+        });
+        const time = createElement("span", { text: formatTime(message.timestamp) });
+        head.appendChild(name);
+        head.appendChild(time);
+        content.appendChild(head);
+
+        const body = createElement("div", { className: "cw-bubble-body readout" });
+        body.appendChild(this.renderMarkdown(message.content));
+        content.appendChild(body);
+
+        bubble.appendChild(content);
+        return bubble;
+    }
+
+    _showTyping() {
+        this._removeTyping();
+        const bubble = createElement("div", { className: "cw-bubble cw-agent" });
+        const content = createElement("div", { className: "cw-bubble-content" });
+        const head = createElement("div", { className: "cw-bubble-header" });
+        head.appendChild(createElement("strong", { text: this.name }));
+        content.appendChild(head);
+        const body = createElement("div", { className: "cw-bubble-body" });
+        const dots = createElement("span", { className: "cw-typing" });
+        dots.appendChild(document.createElement("span"));
+        dots.appendChild(document.createElement("span"));
+        dots.appendChild(document.createElement("span"));
+        body.appendChild(dots);
+        content.appendChild(body);
+        bubble.appendChild(content);
+        this._typingEl = bubble;
+        this._messageBody.appendChild(bubble);
+        this.scrollToBottom();
+    }
+
+    _removeTyping() {
+        if (this._typingEl) {
+            this._typingEl.remove();
+            this._typingEl = null;
+        }
+    }
+
+    /** Centered empty-state shown before the first message. */
+    _renderWelcome() {
+        if (this.messages.length > 0 || this._welcomeEl) {
+            return;
+        }
+        const box = createElement("div", { className: "cw-welcome" });
+        box.appendChild(createElement("h3", { text: "Start the conversation" }));
+        box.appendChild(createElement("p", {
+            text: `Chatting with ${this.name}. Type below to begin.`,
+        }));
+        if (this.description) {
+            box.appendChild(createElement("p", { text: this.description }));
+        }
+        this._welcomeEl = box;
+        this._messageBody.appendChild(box);
+    }
+
+    _removeWelcome() {
+        if (this._welcomeEl) {
+            this._welcomeEl.remove();
+            this._welcomeEl = null;
+        }
+    }
+}
+
+
+/* ================================================================
+   4. CHAT FACTORY
+   ================================================================ */
+// One entry point for creating chat instances from a config object.
+// Different entities (AI agents, projects, workflows) all use the
+// same engine - the config decides the name, layout and controls.
+
+const ChatFactory = {
+    /**
+     * Build a configured ChatWindow.
+     * @param {object} config - the entity config (see README / examples)
+     * @returns {ChatWindow}
+     */
+    create(config) {
+        return new ChatWindow(config);
+    },
+};
+
+
+/* ================================================================
+   SAMPLE CONFIGS (documentation / quick start)
+   ================================================================ */
+// These show how the SAME engine serves different entity types. The
+// application does not need to touch chat-window.js to add new ones.
+
+const CHAT_CONFIG_EXAMPLES = {
+    agent: {
+        id: "planner-agent",
+        type: "agent",
+        name: "Planner Agent",
+        title: "AI Planning Assistant",
+        description: "Creates structured plans for complex problems.",
+        layout: { rightPanel: true, resizable: true, collapsible: true },
+        sections: [
+            {
+                title: "Agent Information",
+                fields: [
+                    { type: "text", label: "Status", value: "Ready" },
+                    { type: "text", label: "Category", value: "Technology" },
+                ],
+            },
+            {
+                title: "Actions",
+                fields: [
+                    { type: "button", label: "Create Plan", action: "createPlan" },
+                    { type: "button", label: "Save Plan", action: "savePlan" },
+                ],
+            },
+        ],
+    },
+    project: {
+        id: "ai-factory",
+        type: "project",
+        name: "AI Factory",
+        title: "Project Workspace",
+        description: "A place to design and run AI workflows.",
+        layout: { rightPanel: true, resizable: true, collapsible: true },
+        sections: [
+            {
+                title: "Project Details",
+                fields: [
+                    { type: "input", name: "projectName", label: "Project Name", value: "AI Factory" },
+                    { type: "select", name: "category", label: "Category", value: "Technology",
+                        options: ["Business", "Teaching", "Technology"] },
+                    { type: "toggle", name: "enabled", label: "Enable project", value: true },
+                ],
+            },
+            {
+                title: "Actions",
+                fields: [
+                    { type: "button", label: "Deploy", action: "deployProject" },
+                ],
+            },
+        ],
+    },
+    business: {
+        id: "marketing-workflow",
+        type: "business",
+        name: "Marketing Workflow",
+        title: "Business Assistant",
+        description: "Guides marketing campaigns from brief to report.",
+        layout: { rightPanel: true, resizable: true, collapsible: true },
+        sections: [
+            {
+                title: "Workflow Controls",
+                collapsible: true,
+                fields: [
+                    { type: "text", label: "Stage", value: "Planning" },
+                    { type: "select", name: "audience", label: "Audience", value: "General",
+                        options: ["General", "Business", "Technical"] },
+                    { type: "divider" },
+                    { type: "button", label: "Approve Brief", action: "approveBrief" },
+                ],
+            },
+        ],
+    },
+};
+
+
+export { ChatFactory, ChatWindow, CHAT_CONFIG_EXAMPLES };
+
+
+---------------------------------------------------------------------------
+FILE: static/js/logic/models.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// logic/models.js - DATA SHAPES + PURE HELPERS
+// ==========================================
+// Factories for the data this app works with, plus small pure
+// helpers. This is the SINGLE source of truth for what an agent,
+// a chat message, and a chat session look like.
+
+/** Make a reasonably unique id like "msg-l8x2p9k3f". */
+export function makeId(prefix = "id") {
+    return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * One bubble in a chat session.
+ * role: "user" | "assistant"
+ */
+export function createMessage({ role, author, text }) {
+    return {
+        id: makeId("msg"),
+        role,
+        author,
+        text,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+/**
+ * Turn the rich message array into the simple list the /api/chat
+ * endpoint expects: [{ role, content }, ...]  (last N turns).
+ */
+export function buildApiHistory(messages, maxTurns = 20) {
+    return messages
+        .slice(-maxTurns)
+        .map((m) => ({ role: m.role, content: m.text }));
+}
+
+/** Friendly timestamp: today -> "14:05", else "Jun 3, 14:05". */
+export function formatTimestamp(isoString) {
+    const date = new Date(isoString);
+    const now = new Date();
+    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    if (date.toDateString() === now.toDateString()) {
+        return time;
+    }
+
+    return `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
+/** Full readable date+time for transcripts: "Aug 31, 2026, 2:05 PM". */
+export function formatFullDate(isoString) {
+    const date = new Date(isoString || Date.now());
+    return date.toLocaleString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+/** Filesystem-safe file stamp: "20260831-1405". */
+export function fileStamp(date = new Date()) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return (
+        `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+        `-${pad(date.getHours())}${pad(date.getMinutes())}`
+    );
+}
+
+/** "My Great Title!" -> "my-great-title" (file-safe). */
+export function slugify(value) {
+    return String(value)
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60);
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/logic/chat-formatter.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// logic/chat-formatter.js - BUILD THE .TXT CHAT TRANSCRIPT
+// ==========================================
+// Turns a ChatSession into the nicely-formatted text file body:
+//
+//   1. A header with the session title, agent, model, date, and the
+//      number of interactions between the LLM and the user.
+//   2. Each message from the conversation, labeled by speaker + time.
+//
+// The transcript text is what gets POSTed to /api/chat-save.
+
+import { formatFullDate, slugify, fileStamp } from "./models.js";
+
+/**
+ * Count interactions = the number of user->assistant turn pairs
+ * (each user message paired with the assistant reply that followed).
+ * Falls back to counting user messages.
+ */
+export function countInteractions(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return 0;
+    }
+
+    let pairs = 0;
+
+    for (let i = 1; i < messages.length; i += 1) {
+        if (
+            messages[i].role === "assistant" &&
+            messages[i - 1].role === "user"
+        ) {
+            pairs += 1;
+        }
+    }
+
+    // A trailing user message with no reply yet still counts as one turn.
+    const last = messages[messages.length - 1];
+    if (last && last.role === "user") {
+        pairs += 1;
+    }
+
+    return pairs;
+}
+
+/**
+ * Build the full .txt transcript string for a session.
+ *
+ * session -> a ChatSession instance (has .title, .agent, .model,
+ *            .messages[]) - see classes/ChatSession.js
+ */
+export function buildTranscript(session) {
+    const messages = session.messages || [];
+    const interactions = countInteractions(messages);
+    const divider = "=".repeat(64);
+    const thin = "-".repeat(64);
+
+    const lines = [];
+    lines.push(divider);
+    lines.push(`Session: ${session.title || "Untitled chat"}`);
+    lines.push(`Agent:   ${session.agentName || session.agentId || "default"}`);
+    lines.push(`Model:   ${session.model || "(server default)"}`);
+    lines.push(`Date:    ${formatFullDate(new Date())}`);
+    lines.push(`Interactions between LLM and user: ${interactions}`);
+    lines.push(divider);
+    lines.push("");
+
+    messages.forEach((message) => {
+        const speaker = message.role === "user"
+            ? "You"
+            : message.author || "AI";
+        lines.push(`[${speaker}]  ${formatFullDate(message.timestamp)}`);
+        lines.push(thin);
+        lines.push(message.text || "");
+        lines.push("");
+    });
+
+    return lines.join("\n");
+}
+
+/**
+ * Build the file name that will be written on the server.
+ *   "<slugified-title>-<YYYYMMDD-HHMM>.txt"
+ */
+export function buildTranscriptFileName(session) {
+    const base = slugify(session.title || "chat") || "chat";
+    return `${base}-${fileStamp()}.txt`;
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/ui/agents.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// ui/agents.js - THE AI AGENT CARD GRID
+// ==========================================
+// Fetches the discovered agents (GET /api/agents) and draws one card
+// per agent. Clicking a card's "Chat" button calls back with that
+// agent so app.js can open/create a ChatSession.
+
+import { getAgents } from "../api/api.js";
+
+/**
+ * Render the agent cards into #agent-cards.
+ *
+ * @param {object} opts
+ * @param {string} opts.containerId - the card grid id
+ * @param {string} opts.statusId    - the status/empty/error area id
+ * @param {(agent: object) => void} opts.onSelect - called when Chat clicked
+ */
+export async function renderAgents({
+    containerId = "agent-cards",
+    statusId = "agent-status-area",
+    onSelect,
+}) {
+    const grid = document.getElementById(containerId);
+    const status = document.getElementById(statusId);
+    if (!grid || !status) {
+        return;
+    }
+
+    // Clear both.
+    grid.replaceChildren();
+    status.replaceChildren();
+
+    let agents;
+    try {
+        agents = await getAgents();
+    } catch (error) {
+        showError(status, error.message, () =>
+            renderAgents({ containerId, statusId, onSelect })
+        );
+        return;
+    }
+
+    if (agents.length === 0) {
+        showEmpty(status, "No agents found. Add a folder to agent_library/ on the server and restart it.");
+        return;
+    }
+
+    agents.forEach((agent) => {
+        grid.appendChild(buildCard(agent, onSelect));
+    });
+}
+
+function buildCard(agent, onSelect) {
+    const card = document.createElement("article");
+    card.className = "card";
+
+    const title = document.createElement("h3");
+    title.textContent = agent.name;
+    card.appendChild(title);
+
+    if (agent.mode) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = agent.mode;
+        card.appendChild(badge);
+    }
+
+    const desc = document.createElement("p");
+    desc.textContent = agent.description || "No description provided.";
+    card.appendChild(desc);
+
+    const start = document.createElement("button");
+    start.type = "button";
+    start.className = "btn btn-primary agent-card-action";
+    start.textContent = "Chat";
+    start.addEventListener("click", () => {
+        if (typeof onSelect === "function") {
+            onSelect(agent);
+        }
+    });
+    card.appendChild(start);
+
+    return card;
+}
+
+function showEmpty(container, message) {
+    const box = document.createElement("div");
+    box.className = "empty-state";
+    box.textContent = message;
+    container.appendChild(box);
+}
+
+function showError(container, message, onRetry) {
+    const box = document.createElement("div");
+    box.className = "empty-state";
+    box.textContent = `Could not load agents: ${message}`;
+
+    const br = document.createElement("br");
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn btn-secondary btn-small";
+    retry.textContent = "Retry";
+    retry.style.marginTop = "12px";
+    retry.addEventListener("click", onRetry);
+
+    box.appendChild(br);
+    box.appendChild(retry);
+    container.appendChild(box);
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/ui/config.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// ui/config.js - THE CONFIG / SETTINGS PANEL
+// ==========================================
+// Renders the configuration section:
+//   - Default agent + default model selects (used when a new chat opens)
+//   - "Chat save path": where /api/chat-save writes .txt transcript files
+//
+// Values are stored/merged on the server via /api/settings.
+
+import { getModels, getAgents, loadAppSettings } from "../api/api.js";
+import { buildConfigForm } from "./config-form.js";
+
+/**
+ * Render the config section.
+ *
+ * @param {object} opts
+ * @param {string} opts.mountId - the container element id
+ * @param {(settings: object) => void} opts.onChanged - called after saving
+ */
+export async function renderConfig({ mountId = "config-section", onChanged }) {
+    const mount = document.getElementById(mountId);
+    if (!mount) {
+        return;
+    }
+
+    mount.replaceChildren();
+    const statusEl = document.createElement("div");
+    statusEl.className = "status-message";
+    mount.appendChild(el("h2", "Configuration"));
+
+    // Fetch everything we need in parallel.
+    let agents = [];
+    let models = [];
+    let settings = {};
+    try {
+        [agents, models, settings] = await Promise.all([
+            getAgents(),
+            getModels(),
+            loadAppSettings(),
+        ]);
+    } catch (error) {
+        statusEl.textContent = `Could not load configuration: ${error.message}`;
+        statusEl.className = "status-message error";
+        mount.appendChild(statusEl);
+        return;
+    }
+
+    const form = buildConfigForm({ agents, models, settings });
+    mount.appendChild(form.root);
+
+    const actions = el("div", "section-actions");
+    const save = el("button", "btn btn-primary", "Save settings");
+    save.type = "button";
+    actions.appendChild(save);
+    mount.appendChild(actions);
+    mount.appendChild(statusEl);
+
+    save.addEventListener("click", async () => {
+        const payload = form.values();
+        save.disabled = true;
+
+        try {
+            const { saveAppSettings } = await import("../api/api.js");
+            const updated = await saveAppSettings(payload);
+            statusEl.textContent = "Settings saved.";
+            statusEl.className = "status-message ok";
+            if (typeof onChanged === "function") {
+                onChanged(updated);
+            }
+        } catch (error) {
+            statusEl.textContent = error.message;
+            statusEl.className = "status-message error";
+        } finally {
+            save.disabled = false;
+        }
+    });
+}
+
+/** One small element helper (kept local to avoid a dom module). */
+function el(tag, className = "", text = "") {
+    const node = document.createElement(tag);
+    if (className) {
+        node.className = className;
+    }
+    if (text) {
+        node.textContent = text;
+    }
+    return node;
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/ui/config-form.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// ui/config-form.js - CONFIG FORM BUILDER
+// ==========================================
+// Builds the configuration form (default agent/model selects + chat
+// save path text field) and returns handles to read the values.
+// Uses the shared .panel and .field CSS classes.
+
+/**
+ * Build the config form DOM.
+ *
+ * @param {object} opts
+ * @param {object[]} opts.agents   - [{id, name}]
+ * @param {object[]} opts.models   - [{id, name}]
+ * @param {object} opts.settings   - stored app settings
+ * @returns {{ root: HTMLElement, values: () => object }}
+ */
+export function buildConfigForm({ agents = [], models = [], settings = {} }) {
+    const root = document.createElement("div");
+    root.className = "panel";
+
+    // ---- Default agent ----
+    root.appendChild(fieldSelect("default-agent-select", "Default agent", [
+        { value: "", label: "(server default)" },
+        ...agents.map((a) => ({ value: a.id, label: `${a.name} (${a.id})` })),
+    ], settings.defaultAgentId || ""));
+
+    // ---- Default model ----
+    root.appendChild(fieldSelect("default-model-select", "Default model", [
+        { value: "", label: "(server default)" },
+        ...models.map((m) => ({ value: m.id, label: m.name })),
+    ], settings.defaultModel || ""));
+
+    // ---- Chat save path ----
+    const pathField = document.createElement("label");
+    pathField.className = "field";
+    const pathLabel = document.createElement("span");
+    pathLabel.textContent = "Chat save path";
+    const pathInput = document.createElement("input");
+    pathInput.type = "text";
+    pathInput.id = "chat-save-path";
+    pathInput.placeholder = "e.g. data/chats or absolute folder";
+    pathInput.value = settings.chatSavePath || "";
+    pathField.appendChild(pathLabel);
+    pathField.appendChild(pathInput);
+    root.appendChild(pathField);
+
+    const pathNote = document.createElement("p");
+    pathNote.className = "config-note";
+    pathNote.textContent = "Where saved chat transcripts (.txt files) are written on the server.";
+    root.appendChild(pathNote);
+
+    return {
+        root,
+        values() {
+            return {
+                defaultAgentId: byId("default-agent-select").value,
+                defaultModel: byId("default-model-select").value,
+                chatSavePath: byId("chat-save-path").value.trim(),
+            };
+        },
+    };
+}
+
+function fieldSelect(id, label, options, value) {
+    const field = document.createElement("label");
+    field.className = "field";
+
+    const span = document.createElement("span");
+    span.textContent = label;
+    field.appendChild(span);
+
+    const select = document.createElement("select");
+    select.id = id;
+    options.forEach((opt) => {
+        const o = new Option(opt.label, opt.value);
+        if (opt.value === value) {
+            o.selected = true;
+        }
+        select.appendChild(o);
+    });
+    field.appendChild(select);
+    return field;
+}
+
+function byId(id) {
+    return document.getElementById(id);
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/ui/markdown.js
+---------------------------------------------------------------------------
+
+// ==========================================
+// ui/markdown.js - CHAT TEXT -> SAFE MARKDOWN DOM
+// ==========================================
+// Converts message text (typed by humans or produced by LLMs) into
+// safe DOM nodes for a pragmatic markdown subset:
+//
+//   BLOCKS : ```fenced code```   blank-line paragraphs
+//            - bullet lists      1. numbered lists
+//   INLINE : `code`   **bold**   *italic*   [text](https://link)
+//
+// SAFETY RULE (never break this): message text NEVER touches
+// innerHTML. Every character is placed with createElement +
+// textContent so "<script>" stays inert. Link hrefs must start
+// with http(s).
+
+const INLINE_RULES = [
+    { tag: "code",   re: /`([^`\n]+)`/ },
+    { tag: "strong", re: /\*\*([^*\n]+)\*\*/ },
+    { tag: "em",     re: /\*([^*\n]+)\*/ },
+    { tag: "a",      re: /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/ },
+];
+
+/**
+ * Render message text into a DocumentFragment ready to append.
+ */
+export function renderMarkdown(text) {
+    const fragment = document.createDocumentFragment();
+
+    String(text ?? "").split("```").forEach((chunk, index) => {
+        if (index % 2 === 1) {
+            fragment.appendChild(buildCodeBlock(chunk));
+        } else {
+            buildBlocks(chunk).forEach((node) => fragment.appendChild(node));
+        }
+    });
+
+    return fragment;
+}
+
+/** Fenced code: drop an optional language tag on the first line. */
+function buildCodeBlock(chunk) {
+    const codeText = chunk.replace(/^[a-zA-Z0-9_+-]*\n/, "");
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = codeText.trim();
+    pre.appendChild(code);
+    return pre;
+}
+
+/** Split plain text into paragraph/list blocks on blank lines. */
+function buildBlocks(text) {
+    const nodes = [];
+
+    String(text)
+        .split(/\n{2,}/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .forEach((block) => nodes.push(buildBlock(block)));
+
+    return nodes;
+}
+
+/** One blank-line-separated chunk becomes a <ul>, <ol> or <p>. */
+function buildBlock(block) {
+    const lines = block.split("\n");
+
+    if (lines.length > 0 && lines.every((l) => /^\s*[-*]\s+\S/.test(l))) {
+        return buildList(lines, "ul", (l) => l.replace(/^\s*[-*]\s+/, ""));
+    }
+
+    if (lines.length > 0 && lines.every((l) => /^\s*\d+[.)]\s+\S/.test(l))) {
+        return buildList(lines, "ol", (l) => l.replace(/^\s*\d+[.)]\s+/, ""));
+    }
+
+    return buildParagraph(lines);
+}
+
+function buildList(lines, tag, stripMarker) {
+    const list = document.createElement(tag);
+    lines.forEach((line) => {
+        const item = document.createElement("li");
+        renderInline(stripMarker(line), item);
+        list.appendChild(item);
+    });
+    return list;
+}
+
+function buildParagraph(lines) {
+    const p = document.createElement("p");
+    p.style.whiteSpace = "pre-line";
+    lines.forEach((line, index) => {
+        if (index > 0) {
+            p.appendChild(document.createTextNode("\n"));
+        }
+        renderInline(line, p);
+    });
+    return p;
+}
+
+/** Walk a line left-to-right; earliest/longest match wins. */
+function renderInline(line, target) {
+    let best = null;
+
+    INLINE_RULES.forEach((rule) => {
+        const match = rule.re.exec(line);
+        if (!match) {
+            return;
+        }
+        const better =
+            best === null ||
+            match.index < best.match.index ||
+            (match.index === best.match.index && match[0].length > best.match[0].length);
+        if (better) {
+            best = { rule, match };
+        }
+    });
+
+    if (!best) {
+        target.appendChild(document.createTextNode(line));
+        return;
+    }
+
+    const { rule, match } = best;
+    const [raw, ...groups] = match;
+
+    if (match.index > 0) {
+        target.appendChild(document.createTextNode(line.slice(0, match.index)));
+    }
+
+    target.appendChild(buildInlineNode(rule.tag, groups));
+    renderInline(line.slice(match.index + raw.length), target);
+}
+
+/** Build the styled node for one matched inline feature. */
+function buildInlineNode(tag, groups) {
+    if (tag === "a") {
+        const link = document.createElement("a");
+        link.href = groups[1];
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = groups[0];
+        return link;
+    }
+
+    const node = document.createElement(tag);
+    node.textContent = groups[0];
+    return node;
+}

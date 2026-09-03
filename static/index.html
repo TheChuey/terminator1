@@ -1,0 +1,58 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent Lab</title>
+
+    <!-- ONE stylesheet - every style (base/layout/components/readout/
+         agent cards + the pop-out chat engine) lives in styles.css.
+         The chat window itself is created at runtime by
+         js/classes/chat-window.js (SECTION 8 of the stylesheet), so no
+         chat markup is needed here. -->
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+
+<body>
+
+<div class="app-shell">
+
+    <!-- The whole app is one scrolling column. JS fills these areas:
+           #agent-cards     -> AI agent cards
+           #config-section  -> config panel (defaults + chat save path) -->
+    <main class="main">
+
+        <section class="page">
+
+            <header class="page-header" id="page-header">
+                <h1>AI Agent Laboratory</h1>
+                <p>Pick an agent below to chat with it in the floating chat, or use the chat button in the corner.</p>
+            </header>
+
+            <!-- AI Agent cards: filled by js/ui/agents.js -->
+            <div class="card-grid" id="agent-cards"></div>
+            <div id="agent-status-area"></div>
+
+            <!-- Config: filled by js/ui/config.js -->
+            <div id="config-section" style="margin-top:32px"></div>
+
+        </section>
+
+    </main>
+
+</div>
+
+
+<!-- Entry point. app.js boots: loads agents + settings, renders cards +
+     config, and opens a reusable ChatWindow (classes/chat-window.js)
+     when an agent is selected. -->
+<script type="module" src="/static/js/app.js"></script>
+
+</body>
+
+</html>
+
+
+---------------------------------------------------------------------------

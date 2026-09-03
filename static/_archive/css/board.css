@@ -1,0 +1,725 @@
+/* ==========================================
+   BOARD.CSS - DISCUSSIONS PAGE STYLES
+   WHAT THIS FILE DOES:
+   Styles the two-pane "post and reply board":
+        [ list of conversations | the open discussion ]
+   plus forum-style posts, nested replies, and the
+   floating composer at the bottom.
+
+   Loaded by the single index.html shell (after
+   components.css). It reuses the color variables
+   defined in base.css, so the look always matches
+   the rest of AI Factory.
+========================================== */
+
+
+/* ------------------------------------------
+   TWO-PANE LAYOUT
+   Left: fixed-width conversation list.
+   Right: the board, which takes all remaining space.
+------------------------------------------ */
+
+.discussions-layout {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 18px;
+    max-width: 1250px;
+}
+
+/* Full-width strip below the two panes. Holds either the reply
+   composer or the "start a new discussion" panel. Same max-width
+   as the layout above so everything lines up. */
+.composer-dock {
+    max-width: 1250px;
+    margin-top: 18px;
+}
+
+
+/* ------------------------------------------
+   LEFT PANE - CONVERSATION LIST
+   A card with a header, a scrollable list,
+   and a footer button.
+------------------------------------------ */
+
+.discussions-panel {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 210px);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.panel-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.panel-footer {
+    flex: 0 0 auto;
+    padding: 12px;
+    border-top: 1px solid var(--color-border);
+}
+
+.panel-footer .btn {
+    width: 100%;
+}
+
+/* The scrollable rows */
+.board-thread-list {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    overflow-y: auto;
+}
+
+.board-thread-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: var(--radius-small);
+    padding: 10px 12px;
+    cursor: pointer;
+}
+
+.board-thread-item:hover {
+    background: #eef2f6;
+}
+
+/* Selected conversation gets a blue accent bar. */
+.board-thread-item.active {
+    background: #eff6ff;
+    box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.thread-icon {
+    color: var(--color-text-faint);
+    font-size: 15px;
+}
+
+.thread-item-body {
+    flex: 1 1 auto;
+    min-width: 0;          /* lets long titles shrink instead of overflow */
+}
+
+.thread-item-name {
+    display: block;
+    overflow: hidden;
+    font-size: 14px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.thread-item-meta {
+    display: block;
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+/* Row actions appear on hover or when selected. */
+.thread-item-actions {
+    display: none;
+    flex: 0 0 auto;
+    gap: 4px;
+}
+
+.board-thread-item:hover .thread-item-actions,
+.board-thread-item.active .thread-item-actions {
+    display: flex;
+}
+
+.thread-item-actions button {
+    border: 0;
+    border-radius: var(--radius-small);
+    padding: 3px 7px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.thread-item-actions button:hover {
+    background: #e2e8f0;
+    color: var(--color-primary);
+}
+
+.thread-item-actions button.danger:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+
+/* ------------------------------------------
+   RIGHT PANE - THE POST BOARD
+   A column: [header] [scrolling posts] [composer]
+------------------------------------------ */
+
+.post-board {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 210px);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    overflow: hidden;
+}
+
+.post-board-header {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+.board-title {
+    min-width: 0;
+}
+
+.board-title h2 {
+    margin: 0;
+    overflow: hidden;
+    font-size: 17px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.board-subtitle {
+    margin-top: 2px;
+    color: var(--color-text-muted);
+    font-size: 13px;
+}
+
+.post-board-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+    margin-left: auto;
+}
+
+/* The scrolling area where posts live */
+.post-board-scroll {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 20px;
+    padding: 20px;
+    overflow-y: auto;
+    background: var(--color-background);
+}
+
+
+/* ------------------------------------------
+   MODEL BADGES (little colored pills)
+------------------------------------------ */
+
+.model-badge {
+    border-radius: 999px;
+    padding: 2px 9px;
+    background: #e2e8f0;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.model-badge.qwen    { background: #f3e8ff; color: #7c3aed; }
+.model-badge.llama   { background: #ffedd5; color: #ea580c; }
+.model-badge.mistral { background: #fef9c3; color: #a16207; }
+
+
+/* ------------------------------------------
+   ONE POST  (works for posts AND replies)
+   Card layout:
+     [header: avatar + name + time + badge]
+     [body:   paragraphs / code / suggestion box]
+     [actions row]
+------------------------------------------ */
+
+/* One post. ".response-card" (the original design's name) is kept as a
+   working alias - every post carries BOTH classes in the DOM.
+
+   Layout: a flex ROW with two columns:
+     [ .post-main : header / body / nested replies ] [ .post-rail ]
+*/
+.forum-post,
+.response-card {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-panel);
+    overflow: hidden;
+}
+
+/* Agent answers carry a light-blue left edge. */
+.forum-post.agent-post,
+.response-card.agent-post {
+    border-left: 3px solid var(--color-accent);
+}
+
+/* Everything that belongs to the post itself */
+.post-main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;              /* lets long text shrink, not overflow */
+}
+
+/* Slim action column docked to the card's right edge */
+.post-rail {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 8px 6px;
+    border-left: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+.post-rail .response-action {
+    text-align: left;
+    white-space: nowrap;
+}
+
+.forum-post-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+}
+
+.forum-avatar {
+    display: inline-flex;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #374151;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.forum-avatar.user-avatar { background: #e5e7eb; }
+
+.forum-avatar.blue   { background: var(--color-primary); color: #fff; }
+.forum-avatar.purple { background: #6d28d9; color: #fff; }
+.forum-avatar.green  { background: #15803d; color: #fff; }
+
+.forum-author {
+    font-size: 14px;
+}
+
+.forum-time {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+/* Post body text */
+.response-body {
+    padding: 14px 16px;
+    color: var(--color-text-soft);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.response-body p {
+    margin: 0 0 10px;
+}
+
+.response-body p:last-child {
+    margin-bottom: 0;
+}
+
+/* Code blocks inside an answer */
+.response-body pre {
+    margin: 0 0 10px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+.response-body pre code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+}
+
+.response-body code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #eef2f6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.9em;
+}
+
+/* Highlighted "Suggested approach" panel */
+.suggestion-box {
+    margin-top: 12px;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-small);
+    background: #eff6ff;
+    padding: 12px 14px;
+}
+
+.suggestion-box strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--color-primary);
+    font-size: 13px;
+}
+
+.suggestion-box ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.suggestion-box li {
+    margin-bottom: 4px;
+}
+
+.suggestion-box li:last-child {
+    margin-bottom: 0;
+}
+
+/* Action buttons live in the card's side rail (.post-rail above).
+   Each one is a small ghost button that highlights on hover. */
+.response-action {
+    border: 0;
+    border-radius: var(--radius-small);
+    padding: 4px 9px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.response-action:hover {
+    background: #e2e8f0;
+    color: var(--color-primary);
+}
+
+.response-action.danger:hover {
+    background: #fde8e8;
+    color: var(--color-danger);
+}
+
+
+/* ------------------------------------------
+   NESTED REPLIES
+   Replies render inside .forum-replies, which is
+   part of the parent card, indented with a thin
+   connector line on the left.
+------------------------------------------ */
+
+.forum-replies {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin: 0 14px 14px 34px;
+    padding-left: 16px;
+}
+
+/* The vertical connector line */
+.forum-replies::before {
+    content: "";
+    position: absolute;
+    top: -4px;
+    bottom: 6px;
+    left: 0;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--color-border);
+}
+
+
+/* ------------------------------------------
+   INLINE EDITOR (Edit action on a post)
+------------------------------------------ */
+
+.inline-edit textarea {
+    display: block;
+    width: calc(100% - 32px);
+    margin: 12px 16px 4px;
+    min-height: 80px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    padding: 10px;
+    font: inherit;
+    outline: none;
+    resize: vertical;
+}
+
+.inline-edit textarea:focus {
+    border-color: var(--color-primary);
+}
+
+.inline-edit-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 0 16px 12px;
+}
+
+
+/* ------------------------------------------
+   REPLY CONTEXT BANNER
+   Shown above the composer while replying to one post.
+------------------------------------------ */
+
+.reply-context {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    border: 1px solid var(--color-accent);
+    border-left: 4px solid var(--color-primary);
+    border-radius: var(--radius-small);
+    background: #eff6ff;
+    padding: 7px 12px;
+    font-size: 13px;
+}
+
+.reply-context strong {
+    overflow: hidden;
+    max-width: 340px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.reply-cancel {
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: var(--color-danger);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+
+/* ------------------------------------------
+   FLOATING COMPOSER  (its own card below the board)
+------------------------------------------ */
+
+.composer-wrapper {
+    border: 1px solid var(--color-border-strong);
+    border-radius: 14px;
+    background: var(--color-surface);
+    box-shadow: 0 6px 20px rgba(15, 23, 42, 0.07);
+    padding: 14px 16px 12px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.composer-wrapper:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 6px 20px rgba(15, 23, 42, 0.07),
+                0 0 0 3px rgba(7, 89, 133, 0.08);
+}
+
+/* Main row: [textarea] [side function buttons] */
+.composer {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+}
+
+/* Vertical stack of secondary actions beside the input */
+.composer-side {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+}
+
+.side-button {
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    padding: 6px 9px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.side-button:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.composer textarea {
+    flex: 1 1 auto;
+    min-height: 24px;
+    max-height: 140px;
+    border: 0;
+    outline: none;
+    resize: none;
+    background: transparent;
+    font: inherit;
+    line-height: 1.5;
+}
+
+/* Bottom row of the bar: hint text left, Post button right */
+.composer-footerbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.composer-hint {
+    color: var(--color-text-faint);
+    font-size: 12px;
+}
+
+.send-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--color-primary);
+    color: #fff;
+    padding: 8px 24px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.send-button:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+}
+
+.send-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+
+/* ------------------------------------------
+   START PANEL  (nothing is open yet)
+   The explicit way to begin a new discussion.
+------------------------------------------ */
+
+.start-panel {
+    border: 2px dashed var(--color-primary);
+    border-radius: var(--radius-medium);
+    background: #eff6ff;
+    padding: 26px 24px;
+    text-align: center;
+}
+
+.start-panel h3 {
+    margin: 0 0 6px;
+    font-size: 17px;
+}
+
+.start-panel p {
+    margin: 0 0 14px;
+    color: var(--color-text-muted);
+    font-size: 13px;
+}
+
+.start-panel textarea {
+    display: block;
+    width: 100%;
+    min-height: 90px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    background: #fff;
+    padding: 12px;
+    font: inherit;
+    line-height: 1.5;
+    text-align: left;
+    outline: none;
+    resize: vertical;
+}
+
+.start-panel textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(7, 89, 133, 0.08);
+}
+
+.start-panel .btn {
+    margin-top: 12px;
+}
+
+
+/* ------------------------------------------
+   RESPONSIVE - stack the panes on narrow screens
+------------------------------------------ */
+
+@media (max-width: 940px) {
+
+    .discussions-layout {
+        grid-template-columns: 1fr;
+    }
+
+    /* Let each pane grow naturally; the page itself scrolls. */
+    .discussions-panel,
+    .post-board {
+        max-height: none;
+    }
+
+    .board-thread-list {
+        max-height: 260px;
+    }
+
+    .forum-replies {
+        margin-left: 18px;
+        padding-left: 12px;
+    }
+}
+
+/* On phones the side rail flips to a horizontal row under the post
+   body - same buttons, no duplication. */
+@media (max-width: 700px) {
+
+    .forum-post,
+    .response-card {
+        flex-direction: column;
+    }
+
+    .post-rail {
+        flex-direction: row;
+        flex-wrap: wrap;
+        width: 100%;
+        border-left: 0;
+        border-top: 1px solid var(--color-border);
+    }
+}

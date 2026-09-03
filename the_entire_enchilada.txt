@@ -1,0 +1,3822 @@
+﻿===========================================================================
+THE ENTIRE ENCHILADA
+short_circuit_2 - Complete Application Reference
+===========================================================================
+
+This file contains the ENTIRE application in one document:
+  1. Folder structure
+  2. Architecture explanation
+  3. Module inventory
+  4. Key class explanations
+  5. Complete source code of every file
+
+Any person or AI can read this file to fully understand the application.
+
+
+===========================================================================
+SECTION 1: FOLDER STRUCTURE
+===========================================================================
+
+short_circuit_2/
+|
+|-- server.py                          # FastAPI entry point
+|
+|-- app/                               # Core application logic
+|   |-- agents/
+|   |   |-- class_library.py           # AgentProfile, PromptBuilder, PromptManager
+|   |   |-- chat_bot_agent.py          # Thin wiring: config -> Agent
+|   |   |-- chat_bot_basic.py          # Minimal fallback agent (no tools)
+|   |-- tools/
+|   |   |-- tools.py                   # Tool functions + SKILL_REGISTRY
+|   |-- state/
+|   |   |-- agent_state.py             # AgentState dataclass (scaffold)
+|   |-- actions/
+|   |   |-- action.py                  # Action dataclass (scaffold)
+|   |-- observations/
+|       |-- observation.py             # Observation dataclass (scaffold)
+|
+|-- build/                             # Runtime classes
+|   |-- __init__.py                    # Empty package marker
+|   |-- class_definition.py            # Agent class + ask_llm()
+|
+|-- read_markdown/                     # READ side: markdown -> JSON configs
+|   |-- markdown_loader.py             # MarkdownLoader + load_all()
+|   |-- chat_bot_agent.md              # Source of truth for main agent
+|   |-- chat_bot_basic.md              # Source of truth for fallback chatbot
+|   |-- agents_index.md                # Global index of all agents
+|   |-- skills/                        # Detailed skill documentation
+|       |-- _header.md
+|       |-- create_file.md
+|       |-- create_folder.md
+|       |-- get_current_date.md
+|       |-- read_file.md
+|       |-- read_pdf.md
+|       |-- setup_venv.md
+|       |-- tell_me_the_date_and_time.md
+|       |-- write_file.md
+|
+|-- write_markdown/                    # WRITE side: code -> markdown + JSON
+|   |-- app_config.py                  # AppConfig: scan models, generate tools.md
+|   |-- tools.md                       # AUTO-GENERATED from SKILL_REGISTRY
+|
+|-- config/                            # GENERATED JSON configs (pipeline output)
+|   |-- chat_bot.json                  # From chat_bot_agent.md
+|   |-- chat_bot_basic.json            # From chat_bot_basic.md
+|   |-- models.json                    # From Ollama + LM Studio scan
+|   |-- skills.json                    # From skills/*.md
+|   |-- tools.json                     # From write_markdown/tools.md
+|
+|-- static/                            # Frontend (served by FastAPI)
+|   |-- index.html                     # Single-page app shell
+|   |-- styles.css                     # Dark theme stylesheet
+|   |-- js/
+|       |-- api.js                     # Fetch wrappers for backend API
+|       |-- app.js                     # Main app logic (state, chat, DOM)
+|       |-- ui.js                      # Mobile panel controller (not imported yet)
+|
+|-- about/                             # Documentation
+|   |-- short_circuit_2.md             # Changelog / design history
+|   |-- replicate_agent.txt            # How to create new agents
+|
+|-- the_entire_enchilada.txt           # This file
+|-- requirements.txt                   # Python dependencies
+|-- README.md                          # Project documentation
+
+
+===========================================================================
+SECTION 2: ARCHITECTURE EXPLANATION
+===========================================================================
+
+WHAT THIS APP IS:
+  A single-process web app: FastAPI backend + vanilla JS frontend,
+  talking to a local Ollama LLM. It is an AI chatbot with tools.
+
+HOW IT WORKS (THE BIG PICTURE):
+
+  1. MARKDOWN IS THE SOURCE OF TRUTH
+     Agent definitions (personality, skills, boundaries) live in
+     read_markdown/*.md files. You edit these to change the agent.
+
+  2. PIPELINE GENERATES JSON ON STARTUP
+     When the server starts:
+       a) AppConfig.refresh_all() scans LLMs and writes models.json
+       b) load_all() reads markdown files and generates JSON configs
+     This means edits to markdown take effect on next server restart.
+
+  3. AGENT IS BUILT FROM JSON ON EVERY REQUEST
+     When a user sends a chat message:
+       a) run_agent() reads config/chat_bot.json
+       b) PromptManager builds an AgentProfile with a composed system prompt
+       c) SKILL_REGISTRY maps skill IDs to actual functions
+       d) Agent is created with model, tools, and profile
+       e) agent.think() sends everything to the LLM and returns the reply
+
+  4. FRONTEND IS A SIMPLE SPA
+     Vanilla JS talks to the backend via fetch. It manages chat sessions
+     using IndexedDB (for file handles) and localStorage (for messages).
+
+THE TWO SIDES OF THE MARKDOWN PIPELINE:
+
+  WRITE SIDE (write_markdown/app_config.py):
+    - Scans Ollama + LM Studio -> config/models.json
+    - Reads SKILL_REGISTRY -> write_markdown/tools.md
+    - Reads SKILL_REGISTRY -> config/skills.json
+
+  READ SIDE (read_markdown/markdown_loader.py):
+    - Reads chat_bot_agent.md -> config/chat_bot.json
+    - Reads chat_bot_basic.md -> config/chat_bot_basic.json
+    - Reads write_markdown/tools.md -> config/tools.json
+    - Reads skills/*.md -> config/skills.json
+
+THE IMPORT GRAPH (who imports whom):
+
+  server.py
+    -> write_markdown.app_config.AppConfig
+    -> read_markdown.markdown_loader.load_all
+    -> app.agents.chat_bot_agent.run_agent
+
+  app/agents/chat_bot_agent.py
+    -> build.class_definition.Agent
+    -> app.agents.class_library.PromptManager
+    -> app.tools.tools.SKILL_REGISTRY
+
+  app/agents/chat_bot_basic.py
+    -> build.class_definition.Agent
+    -> app.agents.class_library.{AgentProfile, PromptManager}
+
+  build/class_definition.py
+    -> ollama
+    -> app.agents.class_library.AgentProfile
+
+  app/tools/tools.py
+    -> build.class_definition.ask_llm (re-exported)
+
+  write_markdown/app_config.py
+    -> app.tools.tools.SKILL_REGISTRY
+
+  app/agents/class_library.py
+    -> (stdlib only: re, dataclasses, string.Formatter, typing)
+
+  read_markdown/markdown_loader.py
+    -> (stdlib only: json, re, sys, pathlib)
+
+
+===========================================================================
+SECTION 3: MODULE INVENTORY
+===========================================================================
+
+--- CORE MODULES ---
+
+server.py
+  Purpose:    FastAPI entry point. All HTTP endpoints, static files, startup pipeline.
+  Endpoints:  GET /, GET /api/models, GET /api/agent, GET /api/tools, POST /api/chat
+
+app/agents/class_library.py
+  Purpose:    Agent building blocks. Zero external dependencies.
+  Exports:    AgentProfile (dataclass), PromptBuilder (class), PromptManager (class)
+
+build/class_definition.py
+  Purpose:    Runtime classes. Agent that thinks/acts/observes, LLM backend.
+  Exports:    Agent (class), ask_llm (function)
+
+app/agents/chat_bot_agent.py
+  Purpose:    Thin wiring. Config -> Agent. What server.py calls.
+  Exports:    run_agent(message, history, model, adjustments)
+
+app/agents/chat_bot_basic.py
+  Purpose:    Minimal fallback chatbot. No tools, basic prompt.
+  Exports:    build_basic_agent(model)
+
+app/tools/tools.py
+  Purpose:    Tool functions the agent can call. Master registry.
+  Exports:    SKILL_REGISTRY (dict), create_folder, create_file, setup_venv,
+              read_file, write_file, read_pdf, tell_me_the_date_and_time
+
+write_markdown/app_config.py
+  Purpose:    WRITE side. Scans LLMs, generates tools.md.
+  Exports:    AppConfig (class with refresh_all())
+
+read_markdown/markdown_loader.py
+  Purpose:    READ side. Parses markdown into JSON configs.
+  Exports:    MarkdownLoader (class), load_all(), build_skills_from_folder()
+
+--- SCAFFOLD (not wired in) ---
+  app/state/agent_state.py     AgentState dataclass
+  app/actions/action.py        Action dataclass
+  app/observations/observation.py  Observation dataclass
+
+--- DATA FILES ---
+  read_markdown/chat_bot_agent.md     Source of truth for main agent
+  read_markdown/chat_bot_basic.md     Source of truth for fallback chatbot
+  read_markdown/agents_index.md       Global agent listing
+  read_markdown/skills/*.md           8 skill docs + 1 header
+  write_markdown/tools.md             AUTO-GENERATED from SKILL_REGISTRY
+
+--- GENERATED CONFIGS ---
+  config/chat_bot.json        From chat_bot_agent.md
+  config/chat_bot_basic.json  From chat_bot_basic.md
+  config/models.json          From Ollama + LM Studio scan
+  config/skills.json          From skills/*.md
+  config/tools.json           From write_markdown/tools.md
+
+--- FRONTEND ---
+  static/index.html           SPA shell (3-column layout)
+  static/styles.css           Dark theme, responsive
+  static/js/api.js            4 fetch wrappers
+  static/js/app.js            State, chat sessions, DOM, send
+  static/js/ui.js             Mobile panels (defined, not imported)
+
+--- DOCUMENTATION ---
+  about/short_circuit_2.md    Changelog
+  about/replicate_agent.txt   How to create new agents
+  README.md                   Project docs
+
+
+===========================================================================
+SECTION 4: KEY CLASS EXPLANATIONS
+===========================================================================
+
+--- AgentProfile (app/agents/class_library.py) ---
+
+  A dataclass holding the character of an agent.
+  Fields:
+    name, system_prompt, role, purpose, personality, boundaries,
+    communication, principles, decision_style, skills_table (list),
+    priorities (doc only, NOT in prompt)
+  Key method: from_dict(config) creates profile from JSON dict.
+
+--- PromptBuilder (app/agents/class_library.py) ---
+
+  Lightweight prompt template utilities.
+  Provides: {variable} substitution, role-based message creation,
+  placeholders for chat history, message composition from tuples.
+  Key methods: template(), system(), human(), placeholder(),
+  from_messages(), format_messages(), input_variables
+
+--- PromptManager (app/agents/class_library.py) ---
+
+  Builds AgentProfile from config and composes the system prompt.
+  Key methods:
+    build(config, adjustments)         Create profile, apply adjustments,
+                                       compose system prompt
+    compose_system_prompt(profile)     Joins sections: ROLE\\nPURPOSE\\n...
+    _apply_adjustments(profile, dict)  Runtime overrides
+
+  compose_system_prompt SELECTIVE inclusion:
+    IN prompt:  role, purpose, personality, boundaries, communication,
+                principles, decision_style, skills_table
+    NOT in prompt:  priorities (documentation only)
+
+--- Agent (build/class_definition.py) ---
+
+  Generic AI agent: thinks, acts, observes.
+  Constructor: Agent(model, tools, profile)
+  Key methods:
+    think(user_input)  -> str    Send to LLM, handle tool calls, return reply
+    act(tool_call)     -> str    Run one tool the LLM requested
+    observe(name, result)        Record tool result in conversation history
+
+--- ask_llm (build/class_definition.py) ---
+
+  LLM backend talking to Ollama.
+  Model resolution: explicit arg -> config -> Ollama list -> RuntimeError
+  Retries once on empty reply.
+
+--- MarkdownLoader (read_markdown/markdown_loader.py) ---
+
+  Parses ## section-based markdown into JSON.
+  Three instances: AGENT_LOADER, BASIC_LOADER, TOOLS_LOADER
+
+--- AppConfig (write_markdown/app_config.py) ---
+
+  Scans LLM models and lists registered tools.
+  refresh_all() writes: models.json, skills.json, tools.md
+
+
+===========================================================================
+SECTION 5: COMPLETE SOURCE CODE
+===========================================================================
+
+
+---------------------------------------------------------------------------
+FILE: build/__init__.py
+---------------------------------------------------------------------------
+
+
+
+
+---------------------------------------------------------------------------
+FILE: build/class_definition.py
+---------------------------------------------------------------------------
+
+"""
+build/class_definition.py
+=========================
+
+Runtime classes for the agent system.
+
+This module contains:
+    Agent       — the generic agent that thinks, acts, and observes
+    ask_llm     — the LLM backend (talks to Ollama)
+
+AgentProfile lives in app/agents/class_library.py.
+"""
+
+import json
+from pathlib import Path
+from typing import Callable, List
+
+import ollama
+
+from app.agents.class_library import AgentProfile
+
+
+# ==========================================================================
+# THE GENERIC AGENT OBJECT
+# --------------------------------------------------------------------------
+# The Agent class maintains conversation history and provides the `think`
+# method to interact with the LLM backend natively using structured messages.
+# ==========================================================================
+
+class Agent:
+    """A generic AI agent that can think (ask the LLM), act (call a tool) and
+    observe (record the tool's result back into the conversation)."""
+
+    def __init__(self, model: str | None, tools: List[Callable], profile: AgentProfile):
+        """Store the model, tools, and character to use during conversations."""
+        self.model = model
+        self.profile = profile
+        self.tools = {f.__name__: f for f in tools}
+        self.messages: List[dict] = []
+
+    def think(self, user_input: str) -> str:
+        """Add user input to history, send the conversation to the LLM, and return its reply."""
+        if not self.messages or self.messages[0].get("role") != "system":
+            self.messages.insert(0, {"role": "system", "content": self.profile.system_prompt})
+
+        self.messages.append({"role": "user", "content": user_input})
+
+        tool_callables = list(self.tools.values()) if self.tools else None
+
+        message = ask_llm(messages=self.messages, model=self.model, tools=tool_callables)
+        self.messages.append(message)
+
+        if message.get("tool_calls"):
+            print(f"[Agent.think] LLM requested {len(message['tool_calls'])} tool calls.")
+            for tool_call in message["tool_calls"]:
+                result = self.act(tool_call)
+                self.observe(tool_call["function"]["name"], result)
+
+            message = ask_llm(messages=self.messages, model=self.model, tools=tool_callables)
+            self.messages.append(message)
+
+        return message.get("content", "")
+
+    def act(self, tool_call: dict) -> str:
+        """Run one tool that the LLM asked for, using the name and args it chose."""
+        name = tool_call.get("function", {}).get("name")
+        args = tool_call.get("function", {}).get("arguments", {})
+        if name in self.tools:
+            try:
+                result = str(self.tools[name](**args))
+                print(f"[Agent.act] Executed {name} -> {result[:100]}...")
+                return result
+            except Exception as e:
+                print(f"[Agent.act] Error executing {name}: {e}")
+                return f"Error executing tool: {e}"
+        print(f"[Agent.act] Missing tool requested: {name}")
+        return f"Error: {name} missing"
+
+    def observe(self, name: str, result: str) -> None:
+        """Record a tool's result back into the conversation history."""
+        self.messages.append({"role": "tool", "content": result, "name": name})
+
+
+# ==========================================================================
+# THE LLM BACKEND (talking to Ollama)
+# --------------------------------------------------------------------------
+# Model resolution, context sizing, and calling the Ollama API.
+# ==========================================================================
+
+MAX_NUM_CTX = 32768
+CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+
+
+def _resolve_model(model: str | None) -> str:
+    """Pick which model to use: explicit arg > config > Ollama list."""
+    if model:
+        print(f"[ask_llm] explicit model used: {model}")
+        return model
+
+    try:
+        data = json.loads((CONFIG_DIR / "models.json").read_text(encoding="utf-8"))
+        models = data.get("models", [])
+        if models:
+            cfg = models[0].get("id")
+            if cfg:
+                print(f"[ask_llm] model from config/models.json: {cfg}")
+                return cfg
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    try:
+        data = ollama.list()
+        names = [
+            m.get("model") if isinstance(m, dict) else getattr(m, "model", None)
+            for m in data.get("models", [])
+        ]
+        names = [n for n in names if n]
+        if names:
+            print(f"[ask_llm] first installed Ollama model: {names[0]}")
+            return names[0]
+    except Exception as exc:
+        print(f"[ask_llm] Ollama list failed: {exc}")
+
+    raise RuntimeError(
+        "No model available. Specify one in the frontend, "
+        "add models to config/models.json, or install one in Ollama."
+    )
+
+
+def _get_context_window(model: str) -> int | None:
+    """Return the model's max context length from Ollama, capped; None if unknown."""
+    try:
+        info = ollama.show(model=model).model_dump()
+        model_info = info.get("modelinfo") or info.get("model_info") or {}
+        length = model_info.get("llama.context_length")
+        if not length:
+            return None
+        return min(int(length), MAX_NUM_CTX)
+    except Exception as exc:
+        print(f"[ask_llm] context lookup failed for {model}: {exc}")
+        return None
+
+
+def ask_llm(messages: List[dict], model: str | None = None, tools: List[Callable] | None = None) -> dict:
+    """Send structured messages to the resolved model via Ollama and return the full message dict."""
+    resolved = _resolve_model(model)
+    num_ctx = _get_context_window(resolved)
+
+    options = {"num_ctx": num_ctx} if num_ctx else {}
+    print(f"[ask_llm] calling ollama.chat with model={resolved} num_ctx={num_ctx} tools={len(tools) if tools else 0}")
+
+    for attempt in (1, 2):
+        kwargs = {
+            "model": resolved,
+            "messages": messages,
+            "options": options,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        response = ollama.chat(**kwargs)
+        message = response["message"]
+
+        content = message.get("content", "") or ""
+        tool_calls = message.get("tool_calls") or []
+
+        print(f"[ask_llm] reply received ({len(content)} chars, {len(tool_calls)} tool calls)")
+
+        if content.strip() or tool_calls:
+            return message
+
+        print(f"[ask_llm] empty reply on attempt {attempt} - retrying")
+
+    return {"role": "assistant", "content": "(The model returned an empty reply. Please try again.)"}
+
+
+
+---------------------------------------------------------------------------
+FILE: app/agents/class_library.py
+---------------------------------------------------------------------------
+
+"""
+app/agents/class_library.py
+============================
+
+Agent building blocks.
+
+This module contains the classes that define what an agent is
+and how its prompt is constructed:
+
+    AgentProfile    — the agent's character (name, role, personality, etc.)
+    PromptBuilder   — lightweight prompt template utilities
+    PromptManager   — builds an AgentProfile from config
+
+Zero external dependencies.
+"""
+
+import re
+from dataclasses import dataclass, field
+from string import Formatter
+from typing import Any
+
+
+# ==========================================================================
+# AGENT PROFILE
+# --------------------------------------------------------------------------
+# The character of an agent: a display name, prompt sections,
+# and the composed system prompt.
+# ==========================================================================
+
+@dataclass
+class AgentProfile:
+    """The character of an agent.
+
+    Fields that go into the system prompt:
+        role, purpose, personality, boundaries,
+        communication, principles, decision_style, skills_table.
+
+    The priorities field is documentation only and is NOT
+    included in the prompt.
+    """
+
+    name: str = ""
+    system_prompt: str = ""
+
+    # Sections that compose the system prompt
+    role: str = ""
+    purpose: str = ""
+    personality: str = ""
+    boundaries: str = ""
+    communication: str = ""
+    principles: str = ""
+    decision_style: str = ""
+    skills_table: list = field(default_factory=list)
+
+    # Documentation only (NOT in the system prompt)
+    priorities: str = ""
+
+    @classmethod
+    def from_dict(cls, config: dict) -> "AgentProfile":
+        """Create an AgentProfile from a configuration dict.
+
+        Maps JSON keys to dataclass fields. Unknown keys are ignored.
+        """
+        return cls(
+            name=config.get("name", ""),
+            role=config.get("role", ""),
+            purpose=config.get("purpose", ""),
+            personality=config.get("personality", ""),
+            boundaries=config.get("boundaries", ""),
+            communication=config.get("communication", ""),
+            principles=config.get("principles", ""),
+            decision_style=config.get("decision_style", ""),
+            skills_table=config.get("skills_table", []),
+            priorities=config.get("priorities", ""),
+        )
+
+
+# ==========================================================================
+# PROMPT BUILDER
+# --------------------------------------------------------------------------
+# Lightweight prompt template utilities.
+# Supports {variable} substitution, role-based messages,
+# chat-history placeholders, and message composition.
+# ==========================================================================
+
+class PromptBuilder:
+    """Small application-owned prompt builder.
+
+    Provides:
+        - {variable} string substitution
+        - system / user / assistant message creation
+        - chat-history placeholders
+        - message composition from tuple syntax
+        - input-variable detection
+
+    Example:
+
+        prompt = PromptBuilder.from_messages([
+            ("system", "You are {name}."),
+            ("placeholder", "chat_history"),
+            ("human", "{input}"),
+        ])
+
+        messages = prompt.format_messages(
+            name="Bob",
+            chat_history=[],
+            input="Hello"
+        )
+    """
+
+    # ==============================================================
+    # TEMPLATE
+    # ==============================================================
+
+    @staticmethod
+    def template(text: str, **kwargs) -> str:
+        """Format a string template with {variable} substitution.
+
+        Raises ValueError if required variables are missing.
+        """
+        PromptBuilder._validate_variables(text, kwargs)
+        return text.format(**kwargs)
+
+    # ==============================================================
+    # MESSAGE BUILDERS
+    # ==============================================================
+
+    @staticmethod
+    def system(text: str, **kwargs) -> dict:
+        """Create a system message dict."""
+        return {"role": "system", "content": PromptBuilder.template(text, **kwargs)}
+
+    @staticmethod
+    def human(text: str, **kwargs) -> dict:
+        """Create a user message dict."""
+        return {"role": "user", "content": PromptBuilder.template(text, **kwargs)}
+
+    @staticmethod
+    def assistant(text: str, **kwargs) -> dict:
+        """Create an assistant message dict."""
+        return {"role": "assistant", "content": PromptBuilder.template(text, **kwargs)}
+
+    # ==============================================================
+    # PLACEHOLDER
+    # ==============================================================
+
+    @staticmethod
+    def placeholder(variable_name: str, values: list | None = None, optional: bool = True) -> list[dict]:
+        """Insert a list of existing messages (e.g. chat history).
+
+        Returns [] if values is None and optional is True.
+        Raises ValueError if values is None and optional is False.
+        """
+        if values is None:
+            if optional:
+                return []
+            raise ValueError(f"Required placeholder '{variable_name}' was not provided.")
+
+        if not isinstance(values, list):
+            raise TypeError(f"Placeholder '{variable_name}' must be a list.")
+
+        return [PromptBuilder._normalize_message(m) for m in values]
+
+    # ==============================================================
+    # COMPOSITION
+    # ==============================================================
+
+    @classmethod
+    def from_messages(cls, messages: list[Any]) -> "PromptBuilder":
+        """Build a prompt from message definitions.
+
+        Supported tuple formats:
+            ("system", "You are {name}.")
+            ("human", "{input}")
+            ("user", "{input}")
+            ("ai", "Previous response")
+            ("assistant", "Previous response")
+            ("placeholder", "chat_history")
+
+        Plain strings become user messages.
+        """
+        parsed = [cls._parse_message(m) for m in messages]
+        return cls(parsed)
+
+    def __init__(self, messages: list[Any] | None = None):
+        self.messages = messages or []
+
+    # ==============================================================
+    # FORMATTING
+    # ==============================================================
+
+    def format_messages(self, **kwargs) -> list[dict]:
+        """Convert the prompt definition into message dicts."""
+        result = []
+        for message in self.messages:
+            if message["type"] == "placeholder":
+                values = kwargs.get(message["variable"], None)
+                result.extend(self.placeholder(message["variable"], values, optional=message["optional"]))
+            else:
+                result.append({
+                    "role": message["role"],
+                    "content": self.template(message["content"], **kwargs),
+                })
+        return result
+
+    def format_system_prompt(self, **kwargs) -> str:
+        """Return only system messages as one string."""
+        messages = self.format_messages(**kwargs)
+        return "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+
+    # ==============================================================
+    # VARIABLES
+    # ==============================================================
+
+    @property
+    def input_variables(self) -> list[str]:
+        """Return all variables used by this prompt, in order of first appearance."""
+        variables = []
+        for message in self.messages:
+            if message["type"] == "placeholder":
+                var = message["variable"]
+                if var not in variables:
+                    variables.append(var)
+            else:
+                for name in self._find_variables(message["content"]):
+                    if name not in variables:
+                        variables.append(name)
+        return variables
+
+    # ==============================================================
+    # INTERNAL HELPERS
+    # ==============================================================
+
+    @staticmethod
+    def _parse_message(message: Any) -> dict:
+        """Convert supported input formats into one internal format."""
+
+        if isinstance(message, dict):
+            if message.get("type") == "placeholder":
+                return message
+            return {"type": "message", "role": message.get("role", "user"), "content": message.get("content", "")}
+
+        if isinstance(message, tuple) and len(message) == 2:
+            role, content = message
+            if role == "placeholder":
+                return {"type": "placeholder", "variable": str(content), "optional": True}
+            return {"type": "message", "role": PromptBuilder._normalize_role(role), "content": str(content)}
+
+        if isinstance(message, str):
+            return {"type": "message", "role": "user", "content": message}
+
+        raise TypeError(f"Unsupported prompt message type: {type(message).__name__}")
+
+    @staticmethod
+    def _normalize_role(role: str) -> str:
+        """Normalize common role aliases."""
+        aliases = {"human": "user", "ai": "assistant"}
+        return aliases.get(role.lower().strip(), role.lower().strip())
+
+    @staticmethod
+    def _normalize_message(message: Any) -> dict:
+        """Convert different message formats into a standard dict."""
+        if isinstance(message, dict):
+            return {"role": message.get("role", "user"), "content": str(message.get("content", ""))}
+        return {"role": getattr(message, "role", "user"), "content": str(getattr(message, "content", message))}
+
+    @staticmethod
+    def _find_variables(text: str) -> list[str]:
+        """Find format variables using Python's Formatter."""
+        variables = []
+        for _, field_name, _, _ in Formatter().parse(text):
+            if not field_name:
+                continue
+            root_name = field_name.split(".")[0].split("[")[0]
+            if root_name not in variables:
+                variables.append(root_name)
+        return variables
+
+    @staticmethod
+    def _validate_variables(text: str, values: dict) -> None:
+        """Detect missing variables before calling str.format()."""
+        required = PromptBuilder._find_variables(text)
+        missing = [name for name in required if name not in values]
+        if missing:
+            raise ValueError("Missing prompt variables: " + ", ".join(missing))
+
+
+# ==========================================================================
+# PROMPT MANAGER
+# --------------------------------------------------------------------------
+# Builds an AgentProfile from configuration and composes
+# the system prompt used by the Agent.
+# ==========================================================================
+
+class PromptManager:
+    """Builds an AgentProfile from config and composes the system prompt."""
+
+    @staticmethod
+    def build(config: dict, adjustments: dict | None = None) -> AgentProfile:
+        """Build an AgentProfile from a configuration dict.
+
+        Steps:
+            1. Create profile from dict
+            2. Apply runtime adjustments
+            3. Compose the system prompt
+        """
+        profile = AgentProfile.from_dict(config)
+        PromptManager._apply_adjustments(profile, adjustments)
+        profile.system_prompt = PromptManager.compose_system_prompt(profile)
+        return profile
+
+    @staticmethod
+    def compose_system_prompt(profile: AgentProfile) -> str:
+        """Build the final system prompt from profile sections.
+
+        Selective inclusion: role, purpose, personality, boundaries,
+        communication, principles, decision_style, and skills_table
+        go into the prompt. priorities is excluded.
+        """
+        parts = []
+
+        if profile.role:
+            parts.append(f"ROLE\n{profile.role}")
+
+        if profile.purpose:
+            parts.append(f"PURPOSE\n{profile.purpose}")
+
+        if profile.personality:
+            parts.append(f"PERSONALITY\n{profile.personality}")
+
+        if profile.boundaries:
+            parts.append(f"BOUNDARIES\n{profile.boundaries}")
+
+        if profile.communication:
+            parts.append(f"COMMUNICATION STYLE\n{profile.communication}")
+
+        if profile.principles:
+            parts.append(f"PRINCIPLES\n{profile.principles}")
+
+        if profile.decision_style:
+            parts.append(f"DECISION STYLE\n{profile.decision_style}")
+
+        if profile.skills_table:
+            lines = [f"- {s['id']}: {s['description']}" for s in profile.skills_table]
+            parts.append("AVAILABLE SKILLS\n" + "\n".join(lines))
+
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _apply_adjustments(profile: AgentProfile, adjustments: dict | None) -> None:
+        """Apply runtime profile overrides."""
+        if not adjustments:
+            return
+        for field_name, value in adjustments.items():
+            if hasattr(profile, field_name):
+                setattr(profile, field_name, value)
+
+
+
+---------------------------------------------------------------------------
+FILE: app/agents/chat_bot_agent.py
+---------------------------------------------------------------------------
+
+"""
+app/agents/chat_bot_agent.py
+============================
+
+Thin wiring: config/chat_bot.json -> PromptManager -> Agent
+
+All prompt logic lives in class_library.py.
+All runtime logic lives in class_definition.py.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from build.class_definition import Agent
+from app.agents.class_library import PromptManager
+from app.tools.tools import SKILL_REGISTRY
+
+CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+AGENT_FILE = CONFIG_DIR / "chat_bot.json"
+
+
+def run_agent(message: str, history: list[dict] | None = None, model: str | None = None, adjustments: dict | None = None) -> str:
+    """Build a fresh agent, replay history, ask the LLM."""
+    config = json.loads(AGENT_FILE.read_text(encoding="utf-8"))
+    profile = PromptManager.build(config, adjustments)
+    tools = [SKILL_REGISTRY[sid] for sid in config.get("skills", []) if sid in SKILL_REGISTRY]
+    chat_bot_agent = Agent(model or config.get("default_model"), tools, profile)
+
+    for m in (history or []):
+        role = "assistant" if m.get("role") == "ai" else m.get("role", "user")
+        content = m.get("content", "")
+        if not content:
+            continue
+        chat_bot_agent.messages.append({"role": role, "content": content})
+
+    return chat_bot_agent.think(message)
+
+
+if __name__ == "__main__":
+    demo = run_agent("hello", [], None, None)
+    print(f"Agent replied: {demo[:100]}...")
+
+
+# HOW IT WORKS
+# ============
+# 1. server.py calls run_agent() with the user's message, chat history, and model.
+# 2. run_agent() reads config/chat_bot.json (generated from chat_bot_agent.md).
+# 3. PromptManager.build() creates an AgentProfile with a composed system prompt.
+# 4. SKILL_REGISTRY maps skill IDs from config to actual functions.
+# 5. Agent is created with model, tools, and profile.
+# 6. Chat history is replayed into agent.messages.
+# 7. agent.think() sends everything to the LLM and returns the reply.
+
+
+
+---------------------------------------------------------------------------
+FILE: app/agents/chat_bot_basic.py
+---------------------------------------------------------------------------
+
+"""
+app/agents/chat_bot_basic.py
+============================
+
+Builds the minimal fallback chatbot from config/chat_bot_basic.json.
+No tools. Basic system prompt.
+
+This is the fallback used when chat_bot_agent.py has no valid config.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from build.class_definition import Agent
+from app.agents.class_library import AgentProfile, PromptManager
+
+CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+BASIC_FILE = CONFIG_DIR / "chat_bot_basic.json"
+
+
+def build_basic_agent(model: str | None = None) -> Agent:
+    """Build a minimal Agent from config/chat_bot_basic.json.
+
+    If the config is missing or empty, uses hardcoded defaults.
+    """
+    try:
+        config = json.loads(BASIC_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        config = {}
+
+    if not config.get("name"):
+        config = {"name": "Chat", "role": "You are a helpful assistant."}
+
+    profile = PromptManager.build(config)
+    return Agent(model=model, tools=[], profile=profile)
+
+
+if __name__ == "__main__":
+    demo = build_basic_agent()
+    print(f"Built basic agent: '{demo.profile.name}'")
+    print(f"  tools: {list(demo.tools.keys())}")
+    print(f"  model: {demo.model}")
+    print(f"  system_prompt: {demo.profile.system_prompt}")
+
+
+
+---------------------------------------------------------------------------
+FILE: app/tools/tools.py
+---------------------------------------------------------------------------
+
+# The model backend functions live in build/class_definition.py.
+# ask_llm is re-exported here so the public name
+# `from app.tools.tools import ask_llm` keeps working.
+from build.class_definition import ask_llm
+from datetime import datetime
+import os
+import subprocess
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+# ==========================================
+# WORKSPACE TOOLS
+# ==========================================
+
+def create_folder(folder_path: str) -> str:
+    """Creates a directory at the specified path."""
+    os.makedirs(folder_path, exist_ok=True)
+    return f"Folder successfully created at: {folder_path}"
+
+def create_file(file_path: str, content: str = "") -> str:
+    """Creates a new file with optional initial content."""
+    print("create a file -------------------------")
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"File successfully created at: {file_path}"
+
+def setup_venv(env_dir: str = ".venv") -> str:
+    """Creates a Python virtual environment (.venv)."""
+    subprocess.run(["python", "-m", "venv", env_dir], check=True)
+    return f"Virtual environment created at: {env_dir}"
+
+def read_file(file_path: str) -> str:
+    """Reads and returns the contents of a text file."""
+    if not os.path.exists(file_path):
+        return f"Error: File '{file_path}' does not exist."
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def write_file(file_path: str, content: str) -> str:
+    """Writes or overwrites text content to a file."""
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"Content successfully written to: {file_path}"
+
+def read_pdf(pdf_path: str) -> str:
+    """Extracts text contents from a PDF file."""
+    if not PdfReader:
+        return "Error: pypdf is not installed. Install via `pip install pypdf`."
+    if not os.path.exists(pdf_path):
+        return f"Error: PDF '{pdf_path}' does not exist."
+    
+    reader = PdfReader(pdf_path)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+# ==========================================
+# TEST TOOL
+# ==========================================
+def tell_me_the_date_and_time() -> str:
+    """Returns the current date and time."""
+    now = datetime.now()
+    return f"The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')}"
+
+
+# SKILL_REGISTRY exposes our available tools to the agents.
+# To add a tool, define the function above and add it here.
+SKILL_REGISTRY = {
+    "create_folder": create_folder,
+    "create_file": create_file,
+    "setup_venv": setup_venv,
+    "read_file": read_file,
+    "write_file": write_file,
+    "read_pdf": read_pdf,
+    "tell_me_the_date_and_time": tell_me_the_date_and_time
+}
+
+
+
+---------------------------------------------------------------------------
+FILE: write_markdown/app_config.py
+---------------------------------------------------------------------------
+
+"""
+write_markdown/app_config.py
+============================
+
+THE WRITE SIDE OF THE MARKDOWN PIPELINE
+---------------------------------------
+
+WHAT THIS MODULE AFFECTS:
+    Writes  write_markdown/tools.md   <- SKILL_REGISTRY (app/tools/tools.py)  [auto-generated, do not hand-edit]
+    Writes  config/skills.json        <- SKILL_REGISTRY (the skills catalog)
+    Writes  config/models.json        <- live LLM scan (Ollama + LM Studio)
+    Affects GET /api/tools (tools.md -> read_markdown/markdown_loader.py -> config/tools.json),
+            the agent's tool list, and the model dropdown.
+
+AppConfig owns the things that must be kept in sync with the real world / the
+real code:
+
+    1. config/models.json  <- the LLM models available right now
+       (scan_models() + refresh_models() write config/models.json)
+
+    2. config/skills.json  <- the skills catalog (id/name/function/description)
+       and write_markdown/tools.md <- the tools the agent can actually call
+       Both come from the SKILL_REGISTRY in app/tools/tools.py:
+       (list_registered_tools() + refresh_skills_json() + refresh_tools_md())
+
+Run standalone:    python write_markdown/app_config.py
+Used at startup:   server.py's lifespan calls refresh_all() BEFORE load_all(),
+                   because read_markdown/markdown_loader.py reads tools.md to
+                   build config/tools.json.
+"""
+
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+import ollama
+
+# Allow running this file directly from anywhere: put the backend root on
+# sys.path so the `app` package below can be imported. Harmless when the app
+# is launched via `python server.py` (root is already on the path).
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app.tools.tools import SKILL_REGISTRY  # the single source of tool truth
+
+LM_STUDIO_URL = "http://127.0.0.1:1234/v1/models"
+LM_STUDIO_TIMEOUT = 2.0
+
+
+class AppConfig:
+    """Scan LLM models -> config/models.json, and list SKILL_REGISTRY -> tools.md."""
+
+    def __init__(self):
+        self.config_dir = BACKEND_DIR / "config"
+        self.models_file = self.config_dir / "models.json"
+        self.skills_file = self.config_dir / "skills.json"
+        self.tools_file = BACKEND_DIR / "write_markdown" / "tools.md"
+
+    # ------------------------------------------------------------------
+    # MODELS
+    # ------------------------------------------------------------------
+
+    def scan_models(self) -> list:
+        """Return the deduped list of available LLM models.
+
+        Scans Ollama (via the ollama package) and LM Studio (via its HTTP
+        endpoint). Each source is wrapped in its own try/except so one
+        unreachable backend never crashes the scan - it just gets skipped.
+        """
+        models = []
+
+        # 1. Ollama: list locally installed models.
+        try:
+            for m in ollama.list().get("models", []):
+                model_id = m.get("model") if isinstance(m, dict) else getattr(m, "model", None)
+                size = m.get("size", 0) if isinstance(m, dict) else getattr(m, "size", 0)
+                if model_id:
+                    models.append(
+                        {"id": model_id, "name": model_id, "source": "ollama", "size": size}
+                    )
+        except Exception as exc:
+            print(f"[app_config] ollama scan failed: {exc}")
+
+        # 2. LM Studio: hit its /v1/models endpoint.
+        try:
+            with urllib.request.urlopen(LM_STUDIO_URL, timeout=LM_STUDIO_TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for m in data.get("data", []):
+                if m.get("id"):
+                    models.append(
+                        {"id": m["id"], "name": m["id"], "source": "lmstudio", "size": 0}
+                    )
+        except Exception as exc:
+            print(f"[app_config] lm_studio scan failed: {exc}")
+
+        # 3. Dedupe by model id, keeping the first occurrence's order.
+        seen, unique = set(), []
+        for m in models:
+            if m["id"] not in seen:
+                seen.add(m["id"])
+                unique.append(m)
+        return unique
+
+    def refresh_models(self) -> list:
+        """Scan models and write config/models.json (returns the model list).
+
+        The file is only overwritten when the scan finds models - an empty
+        scan (e.g. Ollama down) leaves the last known good file untouched.
+        """
+        models = self.scan_models()
+        if models:
+            self.models_file.write_text(
+                json.dumps({"models": models}, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            print(f"[app_config] wrote {len(models)} models to {self.models_file}")
+        else:
+            print(f"[app_config] scan found no models - keeping {self.models_file}")
+        return models
+
+    # ------------------------------------------------------------------
+    # TOOLS
+    # ------------------------------------------------------------------
+
+    def list_registered_tools(self) -> dict:
+        """Return {tool_id: first-line-of-docstring} from SKILL_REGISTRY.
+
+        The registry lives in app/tools/tools.py, so the tool list here can
+        never drift from the functions the agent can actually call.
+        """
+        tools = {}
+        for name, fn in SKILL_REGISTRY.items():
+            doc = (fn.__doc__ or "").strip()
+            tools[name] = doc.splitlines()[0] if doc else ""
+        return tools
+
+    def refresh_skills_json(self) -> None:
+        """Rewrite config/skills.json from the registry (the skills catalog).
+
+        Format: {"skills": [{id, name, function, description}, ...]} where
+        id == function == the SKILL_REGISTRY key. Kept as a generated catalog
+        / test point: build_agent() resolves tools straight from SKILL_REGISTRY
+        and does NOT read this file at runtime.
+        """
+        skills = []
+        for tool_id, doc in self.list_registered_tools().items():
+            skills.append(
+                {
+                    "id": tool_id,
+                    "name": tool_id.replace("_", " ").title(),
+                    "function": tool_id,
+                    "description": doc,
+                }
+            )
+        self.skills_file.write_text(
+            json.dumps({"skills": skills}, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[app_config] wrote {len(skills)} skills to {self.skills_file}")
+
+    def refresh_tools_md(self) -> None:
+        """Rewrite write_markdown/tools.md's '## tools' section from the registry.
+
+        The file is AUTO-GENERATED: hand edits are overwritten at every
+        server start (this runs before read_markdown/markdown_loader.py
+        builds tools.json).
+        """
+        lines = [
+            "# AI Agent Studio — Tools (auto-generated)",
+            "",
+            "> AUTO-GENERATED by `write_markdown/app_config.py` from the `SKILL_REGISTRY`",
+            "> in `app/tools/tools.py` — do not hand-edit; restart to regenerate.",
+            "> READ by `read_markdown/markdown_loader.py` → regenerates `config/tools.json`.",
+            "",
+            "## tools",
+            "",
+        ]
+        for tool_id, doc in self.list_registered_tools().items():
+            icon = "🔧"
+            if "folder" in tool_id: icon = "📁"
+            elif "pdf" in tool_id: icon = "📕"
+            elif "venv" in tool_id: icon = "🐍"
+            elif "read" in tool_id: icon = "📖"
+            elif "write" in tool_id or "create" in tool_id: icon = "✍️"
+            elif "date" in tool_id or "time" in tool_id: icon = "🕒"
+
+            lines += [
+                f"### {tool_id}",
+                f"- name: {tool_id.replace('_', ' ').title()}",
+                f"- icon: {icon}",
+                "- enabled: true",
+            ]
+            if doc:
+                lines.append(f"- description: {doc}")
+            lines.append("")
+        self.tools_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        print(f"[app_config] wrote {len(SKILL_REGISTRY)} tools to {self.tools_file}")
+
+    # ------------------------------------------------------------------
+    # ALL
+    # ------------------------------------------------------------------
+
+    def refresh_all(self) -> dict:
+        """Refresh models.json, skills.json and tools.md; return a summary."""
+        models = self.refresh_models()
+        self.refresh_skills_json()
+        self.refresh_tools_md()
+        return {
+            "models": [m["id"] for m in models],
+            "skills": list(SKILL_REGISTRY.keys()),
+            "tools": list(SKILL_REGISTRY.keys()),
+        }
+
+
+if __name__ == "__main__":
+    # Running `python write_markdown/app_config.py` scans the LLMs, regenerates
+    # skills.json + tools.md and prints a short summary of what was refreshed.
+    sys.stdout.reconfigure(encoding="utf-8")
+    print(json.dumps(AppConfig().refresh_all(), indent=2, ensure_ascii=False))
+
+
+
+---------------------------------------------------------------------------
+FILE: read_markdown/markdown_loader.py
+---------------------------------------------------------------------------
+
+"""
+read_markdown/markdown_loader.py
+================================
+
+THE READ SIDE OF THE MARKDOWN PIPELINE
+--------------------------------------
+
+WHAT THIS MODULE AFFECTS:
+    Reads  read_markdown/chat_bot_agent.md  ->  config/chat_bot.json    (identity, role, personality,
+                                                                         boundaries, skills, etc.)
+    Reads  read_markdown/skills/*.md        ->  config/skills.json      (detailed skill documentation)
+    Reads  write_markdown/tools.md          ->  config/tools.json       (the tools -> GET /api/tools)
+    Affects POST /api/chat (the agent's identity) and GET /api/tools (the toolbox).
+
+If a blueprint is missing, the loader raises FileNotFoundError. The server
+catches this and falls back to a minimal chatbot (no tools, basic prompt).
+No default templates are embedded — the markdown files are the source of truth.
+
+When does this run?
+    server.py calls load_all() on startup (inside a FastAPI lifespan event),
+    so any edit to a blueprint takes effect on the next server restart.
+    You can also run this file directly:  python read_markdown/markdown_loader.py
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+# --------------------------------------------------------------------------
+# FILE PATHS
+# --------------------------------------------------------------------------
+# This module lives in read_markdown/. The JSON outputs stay in config/.
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+CONFIG_DIR = BACKEND_DIR / "config"
+
+# Agent definition source -> chat_bot.json
+AGENT_DEF_FILE = Path(__file__).resolve().parent / "chat_bot_agent.md"
+CHATBOT_FILE = CONFIG_DIR / "chat_bot.json"
+
+# Basic chatbot definition -> chat_bot_basic.json
+BASIC_DEF_FILE = Path(__file__).resolve().parent / "chat_bot_basic.md"
+BASIC_FILE = CONFIG_DIR / "chat_bot_basic.json"
+
+# Skills folder -> skills.json
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+SKILLS_FILE = CONFIG_DIR / "skills.json"
+
+# Tools blueprint -> tools.json (auto-generated by write_markdown/app_config.py)
+TOOLS_DIR = BACKEND_DIR / "write_markdown"
+TOOLS_BLUEPRINT_FILE = TOOLS_DIR / "tools.md"
+TOOLS_FILE = CONFIG_DIR / "tools.json"
+
+
+class MarkdownLoader:
+    """Load one markdown blueprint and regenerate its JSON output file(s).
+
+    A single instance owns ONE blueprint and the output files it produces.
+    Two instances are used at module level (see below): one for the agent
+    definition (chat_bot.json) and one for the tools blueprint (tools.json).
+    """
+
+    def __init__(self, blueprint_path, output_paths=None):
+        """Store the blueprint location and its output files.
+
+        Args:
+            blueprint_path:     path to the source markdown file.
+            output_paths:       dict mapping kind ('agent'/'tools')
+                                to the output JSON file that kind is written to.
+        """
+        self.blueprint_path = Path(blueprint_path)
+        self.output_paths = output_paths or {}
+
+    # ------------------------------------------------------------------
+    # PARSING HELPERS
+    # ------------------------------------------------------------------
+
+    def _parse_key_value(self, text: str) -> dict:
+        """Turn a block of '- key: value' bullet lines into a dictionary."""
+        data = {}
+        for line in text.splitlines():
+            match = re.match(r"^\s*-\s*([A-Za-z0-9_]+)\s*:\s*(.*)$", line)
+            if match:
+                value = match.group(2).strip()
+                if value.lower() == "true":
+                    value = True
+                elif value.lower() == "false":
+                    value = False
+                data[match.group(1).strip()] = value
+        return data
+
+    def _parse_item_blocks(self, text: str) -> list:
+        """Parse a '### <id>' block section (used for tools)."""
+        items = []
+        current_id = None
+        buffer = []
+        for line in text.splitlines(keepends=True):
+            match = re.match(r"^\s*#{3,}\s+(.+?)\s*$", line)
+            if match:
+                if current_id is not None:
+                    items.append({"id": current_id, **self._parse_key_value("".join(buffer))})
+                current_id, buffer = match.group(1).strip(), []
+            else:
+                buffer.append(line)
+        if current_id is not None:
+            items.append({"id": current_id, **self._parse_key_value("".join(buffer))})
+        return items
+
+    def _parse_skills_table(self, text: str) -> list:
+        """Parse a markdown table from the ## skills section."""
+        items = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("|--") or line.startswith("| Skill"):
+                continue
+            match = re.match(r"^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|$", line)
+            if match:
+                skill_id = match.group(1).strip()
+                description = match.group(2).strip()
+                docs = match.group(3).strip()
+                link_match = re.search(r"\[.*?\]\((.+?)\)", docs)
+                docs_path = link_match.group(1) if link_match else ""
+                items.append({
+                    "id": skill_id,
+                    "description": description,
+                    "docs": docs_path,
+                })
+        return items
+
+    def _split_sections(self, text: str) -> dict:
+        """Split the markdown into top-level '## <name>' sections."""
+        sections = {}
+        current = None
+        buffer = []
+        for line in text.splitlines(keepends=True):
+            match = re.match(r"^\s*##\s+(.+?)\s*$", line)
+            if match:
+                if current is not None:
+                    sections[current] = "".join(buffer)
+                current, buffer = match.group(1).strip().lower(), []
+            elif current is not None:
+                buffer.append(line)
+        if current is not None:
+            sections[current] = "".join(buffer)
+        return sections
+
+    def _clean_body(self, text: str) -> str:
+        """Trim blank lines and '---' separators from the edges of a section body."""
+        lines = text.splitlines()
+        while lines and (not lines[0].strip() or lines[0].strip() in ("---", "***")):
+            lines.pop(0)
+        while lines and (not lines[-1].strip() or lines[-1].strip() in ("---", "***")):
+            lines.pop()
+        return "\n".join(lines).strip("\n")
+
+    # ------------------------------------------------------------------
+    # FILE HELPERS
+    # ------------------------------------------------------------------
+
+    def ensure(self) -> Path:
+        """Raise FileNotFoundError if the blueprint file is missing."""
+        if not self.blueprint_path.exists():
+            raise FileNotFoundError(
+                f"Blueprint not found: {self.blueprint_path}\n"
+                f"Create it or restore from git."
+            )
+        return self.blueprint_path
+
+    def write_json(self, path: Path, data: dict) -> None:
+        """Write a dict to a JSON file (pretty-printed, UTF-8)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    # ------------------------------------------------------------------
+    # SECTION BUILDERS (markdown sections -> JSON-ready structures)
+    # ------------------------------------------------------------------
+
+    def build_agent(self, sections: dict) -> dict:
+        """Build chat_bot.json content from the agent definition markdown sections."""
+        identity = self._parse_key_value(sections.get("identity", ""))
+        skills_table = self._parse_skills_table(sections.get("skills", ""))
+        skill_ids = [s["id"] for s in skills_table]
+        role = self._clean_body(sections.get("role", ""))
+        purpose = self._clean_body(sections.get("purpose", ""))
+        personality = self._clean_body(sections.get("personality", ""))
+        communication = self._clean_body(sections.get("communication", ""))
+        boundaries = self._clean_body(sections.get("boundaries", ""))
+        principles = self._clean_body(sections.get("principles", ""))
+        decision_style = self._clean_body(sections.get("decision_style", ""))
+        priorities = self._clean_body(sections.get("priorities", ""))
+
+        return {
+            "name": identity.get("name", "Agent"),
+            "default_model": identity.get("default_model", ""),
+            "type": identity.get("type", ""),
+            "skills": skill_ids,
+            "skills_table": skills_table,
+            "role": role,
+            "purpose": purpose,
+            "personality": personality,
+            "communication": communication,
+            "boundaries": boundaries,
+            "principles": principles,
+            "decision_style": decision_style,
+            "priorities": priorities,
+            "system_prompt": "",
+        }
+
+    def build_tools(self, sections: dict) -> list:
+        """Build the tools list from the 'tools' section ('### <id>' blocks)."""
+        return self._parse_item_blocks(sections.get("tools", ""))
+
+    # ------------------------------------------------------------------
+    # MAIN ENTRY POINT
+    # ------------------------------------------------------------------
+
+    def load(self, kinds=None) -> dict:
+        """Read the blueprint and regenerate the requested JSON output(s).
+
+        Raises FileNotFoundError if the blueprint file is missing.
+        """
+        if kinds is None:
+            kinds = list(self.output_paths.keys())
+
+        self.ensure()
+
+        sections = self._split_sections(self.blueprint_path.read_text(encoding="utf-8"))
+
+        result = {}
+        for kind in kinds:
+            if kind == "agent" or kind == "chat_bot":
+                data = self.build_agent(sections)
+            elif kind == "tools":
+                data = {"tools": self.build_tools(sections)}
+            else:
+                raise ValueError(f"unknown config kind: {kind!r}")
+
+            result[kind] = data
+            if kind in self.output_paths:
+                self.write_json(self.output_paths[kind], data)
+                print(f"[markdown_loader] regenerated {self.output_paths[kind].name} from {self.blueprint_path.name}")
+
+        return result
+
+
+# --------------------------------------------------------------------------
+# SKILLS FOLDER PARSER
+# --------------------------------------------------------------------------
+
+def _parse_skill_file(filepath: Path) -> dict:
+    """Parse a single skill markdown file into a dict."""
+    text = filepath.read_text(encoding="utf-8")
+    sections = {}
+    current = None
+    buffer = []
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^##\s+(.+?)\s*$", line)
+        if match:
+            if current is not None:
+                sections[current] = "".join(buffer).strip()
+            current = match.group(1).strip().lower().replace(" ", "_")
+            buffer = []
+        elif current is not None:
+            buffer.append(line)
+    if current is not None:
+        sections[current] = "".join(buffer).strip()
+
+    title_match = re.match(r"^#\s+Skill:\s+(.+?)\s*$", text)
+    name = title_match.group(1) if title_match else filepath.stem
+
+    parameters = []
+    param_text = sections.get("parameters", "")
+    for line in param_text.splitlines():
+        line = line.strip()
+        if line.startswith("-"):
+            param_match = re.match(r"^-\s*`(\w+)`\s*\((.+?)\):\s*(.*)$", line)
+            if param_match:
+                param_name = param_match.group(1)
+                param_meta = param_match.group(2)
+                param_desc = param_match.group(3)
+                parts = [p.strip() for p in param_meta.split(",")]
+                param_type = parts[0] if parts else "string"
+                required = parts[1].lower() == "required" if len(parts) > 1 else True
+                parameters.append({
+                    "name": param_name,
+                    "type": param_type,
+                    "required": required,
+                    "description": param_desc,
+                })
+
+    related = []
+    related_text = sections.get("related_skills", "")
+    for line in related_text.splitlines():
+        line = line.strip()
+        if line.startswith("-"):
+            rel_match = re.match(r"^-\s*(\w+)", line)
+            if rel_match:
+                related.append(rel_match.group(1))
+
+    return {
+        "id": filepath.stem,
+        "name": name,
+        "function": filepath.stem,
+        "purpose": sections.get("purpose", ""),
+        "when_to_use": [l.strip("- ") for l in sections.get("when_to_use", "").splitlines() if l.strip().startswith("-")],
+        "parameters": parameters,
+        "example": sections.get("example", ""),
+        "returns": sections.get("returns", ""),
+        "requirements": sections.get("requirements", ""),
+        "related_skills": related,
+    }
+
+
+def build_skills_from_folder() -> dict:
+    """Read all skill .md files from read_markdown/skills/ and write config/skills.json."""
+    skills = []
+    if SKILLS_DIR.exists():
+        for filepath in sorted(SKILLS_DIR.glob("*.md")):
+            if filepath.name.startswith("_"):
+                continue
+            skill = _parse_skill_file(filepath)
+            skills.append(skill)
+
+    data = {"skills": skills}
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    SKILLS_FILE.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[markdown_loader] regenerated {SKILLS_FILE.name} from {SKILLS_DIR.name}/")
+    return data
+
+
+# --------------------------------------------------------------------------
+# MODULE-LEVEL INSTANCES + CONVENIENCE API
+# --------------------------------------------------------------------------
+
+# Loader for the agent definition -> chat_bot.json
+AGENT_LOADER = MarkdownLoader(
+    blueprint_path=AGENT_DEF_FILE,
+    output_paths={"agent": CHATBOT_FILE},
+)
+
+# Loader for the basic chatbot definition -> chat_bot_basic.json
+BASIC_LOADER = MarkdownLoader(
+    blueprint_path=BASIC_DEF_FILE,
+    output_paths={"agent": BASIC_FILE},
+)
+
+# Loader for the UI tool-button blueprint -> tools.json
+TOOLS_LOADER = MarkdownLoader(
+    blueprint_path=TOOLS_BLUEPRINT_FILE,
+    output_paths={"tools": TOOLS_FILE},
+)
+
+
+def load_all() -> dict:
+    """Regenerate every JSON config from the markdown blueprints.
+
+    Catches FileNotFoundError for agent and tools blueprints — if a file
+    is missing, that config is simply not generated (the server falls back
+    to a minimal chatbot). Skills are always generated if the folder exists.
+
+    Call this from server.py's startup event so config is always fresh.
+    """
+    result = {}
+    try:
+        result.update(AGENT_LOADER.load(kinds=["agent"]))
+    except FileNotFoundError as e:
+        print(f"[markdown_loader] {e} - no agent available")
+    try:
+        result.update(BASIC_LOADER.load(kinds=["agent"]))
+    except FileNotFoundError as e:
+        print(f"[markdown_loader] {e} - no basic chatbot available")
+    try:
+        result.update(TOOLS_LOADER.load(kinds=["tools"]))
+    except FileNotFoundError as e:
+        print(f"[markdown_loader] {e} - no tools available")
+    result.update(build_skills_from_folder())
+    return result
+
+
+# --------------------------------------------------------------------------
+# STANDALONE RUN
+# --------------------------------------------------------------------------
+if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    result = load_all()
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+
+---------------------------------------------------------------------------
+FILE: server.py
+---------------------------------------------------------------------------
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import List
+from pathlib import Path
+import json
+import os
+
+# App modules:
+#   write_markdown.app_config.AppConfig -> scans LLMs into config/models.json and
+#                                          regenerates write_markdown/tools.md from
+#                                          app/tools/tools.py's SKILL_REGISTRY
+#   read_markdown.markdown_loader.load_all -> reads read_markdown/chat_bot_agent.md +
+#                                          read_markdown/skills/*.md +
+#                                          write_markdown/tools.md at startup and
+#                                          regenerates config/chat_bot.json +
+#                                          config/skills.json + config/tools.json
+#   app.agents.chat_bot_agent.run_agent -> builds a fresh Agent from
+#                                          config/chat_bot.json + SKILL_REGISTRY,
+#                                          replays chat history, and returns the
+#                                          LLM reply for /api/chat
+from contextlib import asynccontextmanager
+from write_markdown.app_config import AppConfig
+from read_markdown.markdown_loader import load_all
+from app.agents.chat_bot_agent import run_agent
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+# One shared instance, used by the startup hook below.
+app_config = AppConfig()
+
+# Startup hook: regenerate the dynamic configs BEFORE any request is served,
+# so edits always take effect on restart.
+# Order matters: refresh_all() writes tools.md from the SKILL_REGISTRY,
+# and load_all() then turns that tools.md plus chat_bot_agent.md and
+# skills/*.md into the JSON files (chat_bot.json / tools.json / skills.json).
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app_config.refresh_all()   # scan LLMs -> models.json; registry -> skills.json + tools.md
+    load_all()                 # markdown -> agent.json / tools.json
+    yield                      # serve requests; code after this runs on shutdown
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ChatRequest(BaseModel):
+    message: str
+    model: str = ""
+    agent: str = ""
+    tool: str = ""
+    history: List[dict] = []  # Prior turns from the frontend: [{role, content}, ...]
+
+# --- UI SOURCE OF TRUTH ---
+
+"""
+GET /api/models
+---------------
+What this request is:
+    The front-end calls this endpoint on page load to populate the model
+    dropdown (#model-select). It is a simple GET request with no body.
+
+What it needs:
+    1. A file named "models.json" located in the config folder of the project
+       (config/models.json, relative to server.py).
+    2. The file must contain a "models" key: a list of objects shaped like
+       {"id": str, "name": str}.
+
+Behaviour:
+    - If models.json exists and has models, the list is returned.
+    - If the file is missing, unreadable, or contains no models, the
+      endpoint returns an empty list: {"models": []}.
+"""
+
+MODELS_FILE = BASE_DIR / "config" / "models.json"
+
+# The tool button list comes from tools.json, which the loader regenerates
+# from write_markdown/tools.md (the ## tools section) at every server start.
+TOOLS_FILE = BASE_DIR / "config" / "tools.json"
+
+# The agent definition comes from chat_bot.json, generated from chat_bot_agent.md.
+AGENT_FILE = BASE_DIR / "config" / "chat_bot.json"
+
+@app.get("/api/models")
+async def get_models():
+    # Look for the models.json file next to server.py.
+    if not MODELS_FILE.exists():
+        print("[MODELS] models.json not found - returning empty list")
+        return {"models": []}
+
+    try:
+        data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        print("[MODELS] models.json unreadable - returning empty list")
+        return {"models": []}
+
+    models = data.get("models", [])
+
+    if not models:
+        print("[MODELS] models.json has no models - returning empty list")
+        return {"models": []}
+
+    print("json file sent: models")
+    return {"models": models}
+
+@app.get("/api/agent")
+async def get_agent():
+    """Return whether a full agent is available.
+
+    The frontend checks this on page load to decide whether to show
+    agent features (tool buttons, agent-specific UI) or fall back to
+    a basic chatbot (no tools, no agent personality).
+    """
+    if not AGENT_FILE.exists():
+        return {"available": False}
+    try:
+        data = json.loads(AGENT_FILE.read_text(encoding="utf-8"))
+        if data.get("name"):
+            return {"available": True, "name": data["name"], "type": data.get("type", "")}
+        return {"available": False}
+    except (OSError, json.JSONDecodeError):
+        return {"available": False}
+
+@app.get("/api/tools")
+async def get_tools():
+    """Return the tool buttons for the frontend toolbox.
+
+    Reads config/tools.json (regenerated from write_markdown/tools.md at startup)
+    so the UI tool list is editable in one markdown file.
+    """
+    try:
+        data = json.loads(TOOLS_FILE.read_text(encoding="utf-8"))
+        return {"tools": data.get("tools", [])}
+    except (OSError, json.JSONDecodeError):
+        print("[TOOLS] tools.json unreadable - returning empty list")
+        return {"tools": []}
+
+# --- I/O ROUTES ---
+
+@app.post("/api/chat")
+def chat(data: ChatRequest):
+    """Handle a chat message from the frontend.
+
+    The request payload carries {message, model, agent, tool}. We build a
+    FRESH agent for this request (stateless - the frontend keeps its own
+    conversation history), using the model the user picked in the dropdown,
+    then return the agent's reply.
+
+    NOTE: this is a SYNC endpoint (def, not async def) on purpose. The LLM
+    call inside agent.think() is blocking (it waits 10-60s for Ollama to
+    generate). FastAPI runs sync endpoints in a THREADPOOL, so the event loop
+    stays free and two chat requests do NOT block each other. An async def
+    would run the blocking LLM call on the event loop and stall the whole
+    server for every reply.
+    """
+    print(f"[SERVER] Message from {data.model}: {data.message}")
+    print(f"[SERVER] history turns received: {len(data.history)}")
+
+    # One call in chat_bot_agent.py does it all: build a fresh agent, replay
+    # the frontend's history into the conversation, and ask the LLM.
+    reply = run_agent(data.message, data.history, data.model)
+    print(f"[SERVER] Reply from {data.model}: {reply[:120]}...")
+    
+
+    return {"reply": reply}
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.get("/")
+async def home():
+    return FileResponse(STATIC_DIR / "index.html")
+
+if __name__ == "__main__":
+    import uvicorn
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
+
+
+---------------------------------------------------------------------------
+FILE: static/index.html
+---------------------------------------------------------------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="data:,">
+    <title>AI Studio</title>
+</head>
+
+<body>
+
+    <!-- MOBILE NAV -->
+    <div class="mobile-nav">
+        <button id="menu-btn">☰ Chats</button>
+        <h2>AI Studio</h2>
+        <button id="panel-btn">⚙ Tools</button>
+    </div>
+
+    <div class="app-container">
+
+        <!-- LEFT SIDEBAR -->
+        <aside class="sidebar" id="sidebar">
+
+            <button id="new-chat-btn" class="agent-btn new-chat">
+                New Chat
+            </button>
+
+            <h3>Chats</h3>
+            <ul id="chat-list"></ul>
+
+        </aside>
+
+        <!-- MAIN CHAT -->
+        <main class="chat-main">
+
+            <div id="chat-window"></div>
+
+            <div class="input-area">
+
+                <div class="input-row">
+
+                    <select id="model-select"></select>
+
+                    <input
+                        type="text"
+                        id="user-input"
+                        placeholder="Message AI..."
+                    >
+
+                    <div class="toolbox" id="toolbox"></div>
+
+                    <button id="send-btn">
+                        Send
+                    </button>
+
+                </div>
+
+            </div>
+
+        </main>
+
+        <!-- RIGHT PANEL -->
+        <aside class="control-panel" id="control-panel">
+
+            <h3>Agents</h3>
+
+            <button class="agent-btn" id="research-btn">
+                Research Agent
+            </button>
+
+            <button class="agent-btn" id="code-btn">
+                Code Agent
+            </button>
+
+            <hr>
+
+            <h3>RAG Loader</h3>
+
+            <input type="file" id="file-loader">
+
+            <div id="file-list"></div>
+
+        </aside>
+
+    </div>
+
+    <script type="module" src="/static/js/app.js"></script>
+
+</body>
+</html>
+
+
+---------------------------------------------------------------------------
+FILE: static/js/api.js
+---------------------------------------------------------------------------
+
+// api.js - Now with real fetch calls
+const API_BASE = "/api";
+
+// Default timeout for FAST endpoints (models/tools just read a JSON file).
+const TIMEOUT_MS = 10000;
+
+// Chat replies come from a LOCAL LLM (Ollama) and routinely take 30-60s+ to
+// generate. The fast default timeout would abort the request mid-generation,
+// so sendMessage uses its own LONG timeout (3 minutes).
+const CHAT_TIMEOUT_MS = 180000;
+
+async function fetchWithTimeout(url, options = {}, timeout = TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        return res;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+export async function loadModels() {
+    const res = await fetchWithTimeout(`${API_BASE}/models`);
+    return await res.json();
+}
+
+export async function loadAgent() {
+    const res = await fetchWithTimeout(`${API_BASE}/agent`);
+    return await res.json();
+}
+
+export async function loadTools() {
+    const res = await fetchWithTimeout(`${API_BASE}/tools`);
+    return await res.json();
+}
+
+export async function sendMessage(payload) {
+    // POST the user's message to /api/chat (server.py -> chat_bot_agent.py).
+    // Uses the long chat timeout so slow LLM replies are not aborted.
+    const res = await fetchWithTimeout(`${API_BASE}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    }, CHAT_TIMEOUT_MS);
+    return await res.json();
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/js/app.js
+---------------------------------------------------------------------------
+
+// =====================================
+// app.js (STABLE + CHAT SESSIONS)
+// =====================================
+
+import {
+    loadModels,
+    loadAgent,
+    loadTools,
+    sendMessage
+} from "./api.js";
+
+
+// =============================
+// STATE
+// =============================
+const state = {
+    model: "",
+    agent: "default",
+    tool: "none",
+    chat: [],
+    chats: [],
+    activeChatId: null,
+    agentAvailable: false
+};
+
+// =============================
+// STORAGE KEYS
+// =============================
+const LS_KEY = "ai-studio-chats";
+const DB_NAME = "ai-studio-db";
+const STORE = "handles";
+
+
+// =============================
+// START
+// =============================
+document.addEventListener("DOMContentLoaded", init);
+
+
+// =============================
+// INIT APP
+// =============================
+async function init() {
+
+    console.log("[APP] START");
+
+    await restoreChats();
+    await setupAgent();
+    await setupModels();
+    await setupTools();
+
+    setupSidebarEvents();
+    setupEvents();
+
+    console.log("[APP] READY");
+}
+
+
+// =============================
+// AGENT AVAILABILITY
+// =============================
+async function setupAgent() {
+    const data = await loadAgent();
+    state.agentAvailable = data.available === true;
+    console.log("[AGENT]", state.agentAvailable ? "available" : "not available");
+}
+
+
+// =============================
+// ELEMENT HELPERS
+// =============================
+const el = {
+    // CHAT
+    model: () => document.getElementById("model-select"),
+    input: () => document.getElementById("user-input"),
+    send: () => document.getElementById("send-btn"),
+    toolbox: () => document.getElementById("toolbox"),
+    chatList: () => document.getElementById("chat-list"),
+    chatWindow: () => document.getElementById("chat-window"),
+
+    // SIDEBAR
+    newChat: () => document.getElementById("new-chat-btn"),
+    research: () => document.getElementById("research-btn"),
+    code: () => document.getElementById("code-btn"),
+    file: () => document.getElementById("file-loader")
+};
+
+
+// =============================
+// HELPERS
+// =============================
+function formatTimestamp(ts) {
+    const d = new Date(ts || Date.now());
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+           `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function activeChat() {
+    return state.chats.find(c => c.id === state.activeChatId) || null;
+}
+
+
+// =============================
+// INDEXEDDB (FILE HANDLES)
+// =============================
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+            if (!req.result.objectStoreNames.contains(STORE)) {
+                req.result.createObjectStore(STORE);
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function saveHandle(id, handle) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).put(handle, id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function getHandle(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readonly");
+        const req = tx.objectStore(STORE).get(id);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function deleteHandle(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+
+// =============================
+// LOCAL STORAGE (CHAT METADATA + MESSAGES)
+// =============================
+function saveChatsMeta() {
+    const meta = state.chats.map(c => ({
+        id: c.id,
+        title: c.title,
+        fileName: c.fileName,
+        created: c.created,
+        messages: c.messages
+    }));
+    localStorage.setItem(LS_KEY, JSON.stringify(meta));
+    console.log("[CHAT] Metadata saved to localStorage", meta.length, "chats");
+}
+
+function loadChatsMeta() {
+    try {
+        return JSON.parse(localStorage.getItem(LS_KEY)) || [];
+    } catch (err) {
+        console.warn("[CHAT] Could not read localStorage", err);
+        return [];
+    }
+}
+
+
+// =============================
+// CHAT FILE BUILDING / WRITING
+// =============================
+function buildChatText(chat) {
+    const lines = chat.messages.map(m => {
+        const ts = formatTimestamp(m.time);
+        return m.role === "user"
+            ? `[${ts}] USER: ${m.text}`
+            : `[${ts}] AI: ${m.text}`;
+    });
+    const header =
+        `AI STUDIO CHAT - ${chat.title}\n` +
+        `Created: ${formatTimestamp(chat.created)}\n` +
+        `================================================\n`;
+    return header + lines.join("\n") + (lines.length ? "\n" : "");
+}
+
+async function writeChatFile(chat) {
+    if (!chat.handle) {
+        console.warn("[CHAT] No file handle for", chat.id, "- skipping file write");
+        return;
+    }
+    const text = buildChatText(chat);
+    const writable = await chat.handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    console.log("[CHAT] File written:", chat.fileName);
+}
+
+
+// =============================
+// CREATE NEW CHAT
+// =============================
+async function createNewChat() {
+
+    console.log("=================================");
+    console.log("[CHAT] New Chat Requested");
+    console.log("=================================");
+
+    if (!window.showSaveFilePicker) {
+        alert("File System Access API not supported in this browser. Use Chrome or Edge.");
+        console.error("[CHAT] showSaveFilePicker unavailable");
+        return;
+    }
+
+    try {
+        // Ask the user where to save this chat's text file.
+        const handle = await window.showSaveFilePicker({
+            suggestedName: `chat-${Date.now()}.txt`,
+            types: [
+                {
+                    description: "Text file",
+                    accept: { "text/plain": [".txt"] }
+                }
+            ]
+        });
+
+        const chat = {
+            id: crypto.randomUUID(),
+            title: "New Chat",
+            fileName: handle.name,
+            created: Date.now(),
+            handle,
+            messages: []
+        };
+
+        state.chats.push(chat);
+        state.activeChatId = chat.id;
+        state.chat = chat.messages;
+
+        await saveHandle(chat.id, handle);
+        saveChatsMeta();
+        await writeChatFile(chat);
+
+        renderChatList();
+        renderMessages();
+
+        console.log("[CHAT] Created", { id: chat.id, file: chat.fileName });
+    } catch (err) {
+        if (err.name !== "AbortError") {
+            console.error("[CHAT] Create Failed", err);
+        }
+    }
+}
+
+
+// =============================
+// RENAME CHAT
+// =============================
+async function renameChat(chatId) {
+
+    const chat = state.chats.find(c => c.id === chatId);
+    if (!chat) return;
+
+    console.log("[CHAT] Rename Requested", chat.title);
+
+    const newName = prompt("Rename chat:", chat.title);
+    if (newName === null) return;
+
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+
+    chat.title = trimmed;
+    saveChatsMeta();
+    await writeChatFile(chat);
+    renderChatList();
+
+    console.log("[CHAT] Renamed", { id: chat.id, title: trimmed });
+}
+
+
+// =============================
+// DELETE CHAT
+// =============================
+async function deleteChat(chatId) {
+
+    const chat = state.chats.find(c => c.id === chatId);
+    if (!chat) return;
+
+    console.log("[CHAT] Delete Requested", chat.title);
+
+    if (!confirm(`Delete chat "${chat.title}"?`)) {
+        console.log("[CHAT] Delete Cancelled");
+        return;
+    }
+
+    state.chats = state.chats.filter(c => c.id !== chatId);
+    if (state.activeChatId === chatId) {
+        state.activeChatId = null;
+        state.chat = [];
+    }
+
+    saveChatsMeta();
+    await deleteHandle(chatId);
+
+    try {
+        if (chat.handle && chat.handle.remove) {
+            await chat.handle.remove();
+            console.log("[CHAT] File deleted:", chat.fileName);
+        }
+    } catch (err) {
+        console.warn("[CHAT] Could not delete file", err);
+    }
+
+    renderChatList();
+    renderMessages();
+
+    console.log("[CHAT] Deleted", { id: chatId, file: chat.fileName });
+}
+
+
+// =============================
+// SELECT CHAT
+// =============================
+function selectChat(chatId) {
+
+    const chat = state.chats.find(c => c.id === chatId);
+    if (!chat) return;
+
+    state.activeChatId = chatId;
+    state.chat = chat.messages;
+
+    renderChatList();
+    renderMessages();
+
+    console.log("[CHAT] Selected", { id: chat.id, title: chat.title });
+}
+
+
+// =============================
+// RENDER CHAT LIST
+// =============================
+function renderChatList() {
+
+    const list = el.chatList();
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    state.chats.forEach(chat => {
+
+        const li = document.createElement("li");
+        li.className = "chat-item" + (chat.id === state.activeChatId ? " active" : "");
+        li.dataset.id = chat.id;
+
+        const title = document.createElement("span");
+        title.className = "chat-title";
+        title.textContent = chat.title;
+        title.title = chat.fileName;
+
+        const ren = document.createElement("button");
+        ren.className = "chat-rename";
+        ren.textContent = "✎";
+        ren.title = "Rename chat";
+
+        const del = document.createElement("button");
+        del.className = "chat-delete";
+        del.textContent = "✕";
+        del.title = "Delete chat";
+
+        li.appendChild(title);
+        li.appendChild(ren);
+        li.appendChild(del);
+
+        li.addEventListener("click", () => selectChat(chat.id));
+
+        title.addEventListener("dblclick", (e) => {
+            e.stopPropagation();
+            renameChat(chat.id);
+        });
+
+        ren.addEventListener("click", (e) => {
+            e.stopPropagation();
+            renameChat(chat.id);
+        });
+
+        del.addEventListener("click", (e) => {
+            e.stopPropagation();
+            deleteChat(chat.id);
+        });
+
+        list.appendChild(li);
+    });
+
+    console.log("[CHAT] List Rendered:", state.chats.length, "chats");
+}
+
+
+// =============================
+// RENDER MESSAGES
+// =============================
+function renderMessages() {
+
+    const windowEl = el.chatWindow();
+    if (!windowEl) return;
+
+    windowEl.innerHTML = "";
+
+    const chat = activeChat();
+    if (!chat) return;
+
+    chat.messages.forEach(m => {
+
+        const div = document.createElement("div");
+        div.className = "msg " + (m.role === "user" ? "msg-user" : "msg-ai");
+        div.textContent = m.text;
+
+        windowEl.appendChild(div);
+    });
+
+    windowEl.scrollTop = windowEl.scrollHeight;
+}
+
+
+// =============================
+// RESTORE CHATS ON LOAD
+// =============================
+async function restoreChats() {
+
+    const meta = loadChatsMeta();
+    console.log("[CHAT] Restoring", meta.length, "chats");
+
+    for (const m of meta) {
+
+        let handle = null;
+        try {
+            handle = await getHandle(m.id);
+        } catch (err) {
+            console.warn("[CHAT] No stored handle for", m.id, err);
+        }
+
+        state.chats.push({
+            id: m.id,
+            title: m.title,
+            fileName: m.fileName,
+            created: m.created,
+            handle,
+            messages: m.messages || []
+        });
+    }
+
+    if (state.chats.length) {
+        state.activeChatId = state.chats[0].id;
+        state.chat = state.chats[0].messages;
+    }
+
+    renderChatList();
+    renderMessages();
+}
+
+
+// =============================
+// MODELS
+// =============================
+async function setupModels() {
+
+    const data = await loadModels();
+
+    const select = el.model();
+
+    if (!select) {
+        console.error("[MODELS] model-select not found");
+        return;
+    }
+
+    select.innerHTML = "";
+
+    if (!data.models || data.models.length === 0) {
+        console.warn("[MODELS] No models returned from /api/models");
+        state.model = "";
+        return;
+    }
+
+    data.models.forEach(m => {
+
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.name;
+
+        select.appendChild(opt);
+    });
+
+    state.model = data.models[0].id;
+
+    console.log("[MODELS LOADED]");
+}
+
+
+// =============================
+// TOOLS
+// =============================
+async function setupTools() {
+    const data = await loadTools();
+    const box = el.toolbox();
+    if (!box) return;
+
+    box.innerHTML = "";
+
+    if (!state.agentAvailable) {
+        box.style.display = "none";
+        console.log("[TOOLS] Agent not available - toolbox hidden");
+        return;
+    }
+
+    box.style.display = "";
+    data.tools.forEach(t => {
+        const btn = document.createElement("button");
+        btn.className = "tool-icon-btn";
+        btn.innerHTML = t.icon;
+        btn.title = t.name;
+
+        if (!t.enabled) btn.disabled = true;
+
+        btn.addEventListener("click", () => {
+            state.tool = t.id;
+            console.log("[TOOL SELECTED]", t.id);
+            document.querySelectorAll('.tool-icon-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+        box.appendChild(btn);
+    });
+}
+
+
+// =============================
+// MAIN EVENTS
+// =============================
+function setupEvents() {
+
+    const sendBtn = el.send();
+    const input = el.input();
+    const model = el.model();
+
+    if (sendBtn) {
+        sendBtn.addEventListener("click", () => {
+            console.log("=================================");
+            console.log("[BUTTON] Send Clicked");
+            console.log("=================================");
+            send();
+        });
+    }
+
+    if (input) {
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                console.log("[EVENT] Enter Pressed");
+                send();
+            }
+        });
+    }
+
+    if (model) {
+        model.addEventListener("change", (e) => {
+            state.model = e.target.value;
+            console.log("[MODEL]", state.model);
+        });
+    }
+}
+
+
+// =============================
+// SIDEBAR EVENTS
+// =============================
+function setupSidebarEvents() {
+
+    const newChat = el.newChat();
+    const research = el.research();
+    const code = el.code();
+    const file = el.file();
+
+    if (newChat) {
+        newChat.addEventListener("click", () => {
+            console.log("=================================");
+            console.log("[BUTTON] New Chat Clicked");
+            console.log("=================================");
+            createNewChat();
+        });
+    }
+
+    if (research) {
+        research.addEventListener("click", () => {
+            console.log("=================================");
+            console.log("[BUTTON] Research Agent Clicked");
+            console.log("=================================");
+        });
+    }
+
+    if (code) {
+        code.addEventListener("click", () => {
+            console.log("=================================");
+            console.log("[BUTTON] Code Agent Clicked");
+            console.log("=================================");
+        });
+    }
+
+    if (file) {
+        file.addEventListener("change", (e) => {
+            console.log("=================================");
+            console.log("[EVENT] File Loaded");
+            console.log("[FILES]", e.target.files);
+            console.log("=================================");
+        });
+    }
+
+    console.log("[SIDEBAR] Events Attached");
+}
+
+
+// =============================
+// SEND MESSAGE
+// =============================
+async function send() {
+
+    const msg = el.input()?.value.trim();
+    if (!msg) return;
+
+    console.log("=================================");
+    console.log("[SEND] Message Sent");
+    console.log("[PAYLOAD]", { message: msg, model: state.model, agent: state.agent, tool: state.tool });
+    console.log("=================================");
+
+    let chat = activeChat();
+
+    // No chat yet - create one and ask where to save it.
+    if (!chat) {
+        console.warn("[SEND] No active chat - creating new chat first");
+        await createNewChat();
+        chat = activeChat();
+        if (!chat) return;
+    }
+
+    // History = the stored prior turns (this new message is NOT included yet -
+    // the server appends it). Maps {role, text, time} -> {role, content} so the
+    // agent can replay the whole conversation into the loop.
+    const payload = {
+        message: msg,
+        model: state.model,
+        agent: state.agent,
+        tool: state.tool,
+        history: chat.messages.map(m => ({ role: m.role, content: m.text }))
+    };
+
+    el.input().value = "";
+
+    chat.messages.push({ role: "user", text: msg, time: Date.now() });
+    state.chat = chat.messages;
+    renderMessages();
+
+    // Disable the Send button while the request is in flight so the user
+    // cannot double-send (double sends would only stack up slow LLM requests).
+    const sendBtn = el.send();
+    if (sendBtn) sendBtn.disabled = true;
+
+    try {
+        // POST the message to server.py (/api/chat), which forwards it to
+        // chat_bot_agent.py. This can take up to 3 minutes for a local LLM.
+        const res = await sendMessage(payload);
+
+        console.log("[AI]", res.reply);
+
+        // Only push the AI bubble when the server actually returned a reply.
+        // (res?.reply avoids pushing "undefined" into the chat on failures.)
+        const reply = res?.reply ?? "";
+        if (reply) {
+            chat.messages.push({ role: "ai", text: reply, time: Date.now() });
+        } else {
+            // Safety net: never store an empty AI turn (it would be replayed
+            // into every later prompt). The server already falls back to a
+            // readable message, so this should be rare.
+            chat.messages.push({
+                role: "ai",
+                text: "(no reply received - please try again)",
+                time: Date.now()
+            });
+        }
+    } catch (err) {
+        // The fetch failed (timeout, server down, network). Show the error in
+        // the chat window instead of failing silently so the user knows what
+        // happened and can retry.
+        console.error("[SEND] Failed", err);
+        chat.messages.push({
+            role: "ai",
+            text: `(error: could not reach the server - ${err.message})`,
+            time: Date.now()
+        });
+    } finally {
+        // Always re-enable the Send button, whether we got a reply or an error.
+        if (sendBtn) sendBtn.disabled = false;
+    }
+
+    state.chat = chat.messages;
+    renderMessages();
+
+    saveChatsMeta();
+    await writeChatFile(chat);
+
+    console.log("[SAVE] Conversation written to", chat.fileName);
+}
+
+
+
+---------------------------------------------------------------------------
+FILE: static/js/ui.js
+---------------------------------------------------------------------------
+
+// ui.js
+
+// ======================================================
+// MOBILE PANEL CONTROLLER
+// ======================================================
+
+export function initializeMobilePanels() {
+
+    // =========================================
+    // GET HTML ELEMENTS
+    // =========================================
+
+    const menuBtn =
+        document.getElementById("menu-btn");
+
+    const panelBtn =
+        document.getElementById("panel-btn");
+
+    const sidebar =
+        document.getElementById("sidebar");
+
+    const controlPanel =
+        document.getElementById("control-panel");
+
+    // =========================================
+    // SAFETY CHECKS
+    // =========================================
+
+    if (
+        !menuBtn ||
+        !panelBtn ||
+        !sidebar ||
+        !controlPanel
+    ) {
+
+        console.warn(
+            "[UI] Mobile Panel Elements Missing"
+        );
+
+        return;
+    }
+
+// =========================================
+// LEFT SIDEBAR TOGGLE
+// =========================================
+
+menuBtn.addEventListener(
+    "click",
+    (event) => {
+
+        // Prevent bubbling
+        event.stopPropagation();
+
+        console.log(
+            "[UI] Toggle Sidebar"
+        );
+
+        // =====================================
+        // CHECK CURRENT STATE
+        // =====================================
+
+        const sidebarIsOpen =
+            sidebar.classList.contains(
+                "active"
+            );
+
+        // =====================================
+        // CLOSE EVERYTHING FIRST
+        // =====================================
+
+        sidebar.classList.remove(
+            "active"
+        );
+
+        controlPanel.classList.remove(
+            "active"
+        );
+
+        // =====================================
+        // REOPEN ONLY IF IT WAS CLOSED
+        // =====================================
+
+        if (!sidebarIsOpen) {
+
+            sidebar.classList.add(
+                "active"
+            );
+        }
+
+        console.log(
+            `[UI] Sidebar Open: ${!sidebarIsOpen}`
+        );
+    }
+);
+
+
+// =========================================
+// RIGHT PANEL TOGGLE
+// =========================================
+
+panelBtn.addEventListener(
+    "click",
+    (event) => {
+
+        // Prevent bubbling
+        event.stopPropagation();
+
+        console.log(
+            "[UI] Toggle Control Panel"
+        );
+
+        // =====================================
+        // CHECK CURRENT STATE
+        // =====================================
+
+        const panelIsOpen =
+            controlPanel.classList.contains(
+                "active"
+            );
+
+        // =====================================
+        // CLOSE EVERYTHING FIRST
+        // =====================================
+
+        sidebar.classList.remove(
+            "active"
+        );
+
+        controlPanel.classList.remove(
+            "active"
+        );
+
+        // =====================================
+        // REOPEN ONLY IF IT WAS CLOSED
+        // =====================================
+
+        if (!panelIsOpen) {
+
+            controlPanel.classList.add(
+                "active"
+            );
+        }
+
+        console.log(
+            `[UI] Control Panel Open: ${!panelIsOpen}`
+        );
+    }
+);
+
+    // =========================================
+    // AUTO CLOSE PANELS WHEN RESIZING
+    // =========================================
+
+    window.addEventListener(
+        "resize",
+        () => {
+
+            // Desktop mode
+            if (window.innerWidth > 768) {
+
+                sidebar.classList.remove(
+                    "active"
+                );
+
+                controlPanel.classList.remove(
+                    "active"
+                );
+            }
+        }
+    );
+
+    // =========================================
+    // CLICK OUTSIDE TO CLOSE
+    // =========================================
+
+    document.addEventListener(
+        "click",
+        (event) => {
+
+            const clickedInsideSidebar =
+                sidebar.contains(event.target);
+
+            const clickedInsidePanel =
+                controlPanel.contains(event.target);
+
+            const clickedMenuButton =
+                menuBtn.contains(event.target);
+
+            const clickedPanelButton =
+                panelBtn.contains(event.target);
+
+            // Ignore desktop mode
+            if (window.innerWidth > 768) {
+                return;
+            }
+
+            // Close sidebar
+            if (
+                !clickedInsideSidebar &&
+                !clickedMenuButton
+            ) {
+
+                sidebar.classList.remove(
+                    "active"
+                );
+            }
+
+            // Close control panel
+            if (
+                !clickedInsidePanel &&
+                !clickedPanelButton
+            ) {
+
+                controlPanel.classList.remove(
+                    "active"
+                );
+            }
+        }
+    );
+
+    console.log(
+        "[UI] Mobile Panels Initialized"
+    );
+}
+
+
+
+// ======================================================
+// RENDER MODEL DROPDOWN
+// ======================================================
+
+export function renderModelDropdown(
+    models,
+    selectId
+) {
+
+    const select =
+        document.getElementById(selectId);
+
+    if (!select) {
+
+        console.error(
+            `[UI] Select Not Found: ${selectId}`
+        );
+
+        return;
+    }
+
+    // =========================================
+    // CLEAR OLD OPTIONS
+    // =========================================
+
+    select.innerHTML = "";
+
+    // =========================================
+    // CREATE OPTIONS
+    // =========================================
+
+    models.forEach(model => {
+
+        const option =
+            document.createElement("option");
+
+        option.value = model.id;
+
+        option.textContent = model.name;
+
+        select.appendChild(option);
+    });
+
+    console.log(
+        "[UI] Model Dropdown Rendered"
+    );
+}
+
+
+
+// ======================================================
+// RENDER AGENT BUTTONS
+// ======================================================
+
+export function renderAgentButtons(
+    agents,
+    containerId
+) {
+
+    const container =
+        document.getElementById(containerId);
+
+    if (!container) {
+
+        console.error(
+            `[UI] Container Missing: ${containerId}`
+        );
+
+        return;
+    }
+
+    // =========================================
+    // REMOVE OLD BUTTONS
+    // =========================================
+
+    container.innerHTML = "";
+
+    // =========================================
+    // CREATE BUTTONS
+    // =========================================
+
+    agents.forEach(agent => {
+
+        const button =
+            document.createElement("button");
+
+        button.className = "agent-btn";
+
+        button.id = agent.id;
+
+        button.textContent = agent.name;
+
+        // =====================================
+        // DISABLED AGENTS
+        // =====================================
+
+        if (!agent.enabled) {
+
+            button.disabled = true;
+
+            button.style.opacity = "0.5";
+        }
+
+        // =====================================
+        // BUTTON CLICK EVENT
+        // =====================================
+
+        button.addEventListener(
+            "click",
+            () => {
+
+                console.log("=================================");
+
+                console.log(
+                    `[HTML] BUTTON CLICKED`
+                );
+
+                console.log(
+                    `[AGENT NAME] ${agent.name}`
+                );
+
+                console.log(
+                    `[AGENT ID] ${agent.id}`
+                );
+
+                console.log(
+                    `[ENDPOINT] ${agent.endpoint}`
+                );
+
+                console.log("=================================");
+
+                // =====================================
+                // AUTO CLOSE MOBILE PANEL
+                // =====================================
+
+                if (window.innerWidth <= 768) {
+
+                    const controlPanel =
+                        document.getElementById(
+                            "control-panel"
+                        );
+
+                    if (controlPanel) {
+
+                        controlPanel.classList.remove(
+                            "active"
+                        );
+                    }
+                }
+            }
+        );
+
+        // =====================================
+        // ADD BUTTON TO HTML
+        // =====================================
+
+        container.appendChild(button);
+    });
+
+    console.log(
+        "[UI] Agent Buttons Rendered"
+    );
+}
+
+
+---------------------------------------------------------------------------
+FILE: static/styles.css
+---------------------------------------------------------------------------
+
+/*
+=====================================
+THEME
+=====================================
+*/
+
+:root {
+
+    --primary-bg: #343541;
+    --secondary-bg: #40414f;
+    --sidebar-bg: #202123;
+
+    --text-color: #ececec;
+    --border-color: #565869;
+    --hover-color: #2a2b32;
+
+    --accent-color: #7da0b1;
+    --accent-hover: #9dbbc9;
+
+    --button-text: #1a1a1a;
+}
+
+/*
+=====================================
+RESET
+=====================================
+*/
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+
+    height: 100%;
+    font-family: 'Segoe UI', sans-serif;
+
+    background: var(--primary-bg);
+    color: var(--text-color);
+
+    overflow: hidden;
+}
+
+/*
+=====================================
+LAYOUT
+=====================================
+*/
+
+.app-container {
+
+    display: flex;
+    height: 100vh;
+}
+
+/*
+=====================================
+SIDEBAR
+=====================================
+*/
+
+.sidebar {
+
+    width: 260px;
+
+    background: var(--sidebar-bg);
+
+    border-right: 1px solid var(--border-color);
+
+    padding: 20px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/*
+=====================================
+CHAT LIST (SIDEBAR)
+=====================================
+*/
+
+#chat-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.chat-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border-color);
+    background: var(--primary-bg);
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.chat-item:hover {
+    background: var(--hover-color);
+}
+
+.chat-item.active {
+    background: var(--accent-color);
+    border-color: var(--accent-hover);
+}
+
+.chat-item.active .chat-title {
+    color: var(--button-text);
+}
+
+.chat-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.9rem;
+}
+
+.chat-rename {
+    padding: 2px 6px;
+    font-size: 0.8rem;
+    background: transparent;
+    color: var(--text-color);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.chat-rename:hover {
+    background: var(--accent-hover);
+    color: var(--button-text);
+    border-color: var(--accent-hover);
+}
+
+.chat-delete {
+    padding: 2px 6px;
+    font-size: 0.8rem;
+    background: transparent;
+    color: var(--text-color);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.chat-delete:hover {
+    background: #e05252;
+    color: white;
+    border-color: #e05252;
+}
+
+/*
+=====================================
+CHAT MESSAGES
+=====================================
+*/
+
+.msg {
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.msg-user {
+    background: var(--accent-color);
+    color: var(--button-text);
+    align-self: flex-end;
+}
+
+.msg-ai {
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+}
+
+#chat-window {
+    display: flex;
+    flex-direction: column;
+}
+
+/*
+=====================================
+MAIN CHAT
+=====================================
+*/
+
+.chat-main {
+
+    flex: 1;
+
+    display: flex;
+    flex-direction: column;
+
+    padding: 20px;
+
+    gap: 15px;
+
+    overflow: hidden;
+}
+
+#chat-window {
+
+    flex: 1;
+
+    background: var(--secondary-bg);
+
+    border: 1px solid var(--border-color);
+
+    border-radius: 8px;
+
+    padding: 20px;
+
+    overflow-y: auto;
+}
+
+/*
+=====================================
+INPUT AREA
+=====================================
+*/
+
+.input-area {
+
+    background: var(--secondary-bg);
+
+    border-radius: 8px;
+
+    padding: 10px;
+}
+
+.input-row {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 10px;
+
+    width: 100%;
+}
+
+#user-input {
+
+    flex: 1;
+}
+
+/*
+=====================================
+RIGHT PANEL
+=====================================
+*/
+
+.control-panel {
+
+    width: 280px;
+
+    background: var(--sidebar-bg);
+
+    border-left: 1px solid var(--border-color);
+
+    padding: 20px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/*
+=====================================
+FORM ELEMENTS
+=====================================
+*/
+
+input,
+select,
+button {
+
+    padding: 10px;
+
+    border-radius: 5px;
+
+    border: 1px solid var(--border-color);
+
+    background: var(--primary-bg);
+
+    color: white;
+}
+
+button {
+
+    cursor: pointer;
+
+    background: var(--accent-color);
+
+    color: var(--button-text);
+
+    border: none;
+
+    transition: 0.2s;
+}
+
+button:hover {
+
+    background: var(--accent-hover);
+}
+
+.agent-btn {
+
+    width: 100%;
+    text-align: left;
+}
+
+.new-chat {
+
+    background: #10a37f;
+    color: white;
+}
+
+/*
+=====================================
+TOOLBOX
+=====================================
+*/
+
+.toolbox {
+
+    display: flex;
+
+    flex-direction: row;
+
+    align-items: center;
+
+    justify-content: center;
+
+    gap: 8px;
+
+    padding-left: 10px;
+
+    border-left: 1px solid var(--border-color);
+
+    flex-shrink: 0;
+}
+
+.tool-icon-btn {
+
+    background: transparent;
+
+    border: none;
+
+    color: var(--text-color);
+
+    font-size: 1.2rem;
+
+    opacity: 0.7;
+}
+
+.tool-icon-btn:hover {
+
+    opacity: 1;
+    background: var(--hover-color);
+}
+
+/*
+=====================================
+MOBILE NAV
+=====================================
+*/
+
+.mobile-nav {
+
+    display: none;
+
+    height: 50px;
+
+    background: var(--sidebar-bg);
+
+    border-bottom: 1px solid var(--border-color);
+
+    padding: 0 10px;
+
+    align-items: center;
+
+    justify-content: space-between;
+}
+
+.mobile-nav button {
+
+    padding: 8px 12px;
+}
+
+/*
+=====================================
+SCROLLBAR
+=====================================
+*/
+
+::-webkit-scrollbar {
+
+    width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+
+    background: var(--border-color);
+
+    border-radius: 4px;
+}
+
+/*
+=====================================
+RESPONSIVE
+=====================================
+*/
+
+@media (max-width: 768px) {
+
+    .mobile-nav {
+
+        display: flex;
+    }
+
+    .app-container {
+
+        height: calc(100vh - 50px);
+    }
+
+    .sidebar,
+    .control-panel {
+
+        position: fixed;
+
+        top: 50px;
+        bottom: 0;
+
+        z-index: 999;
+
+        transition: transform 0.3s ease;
+
+        overflow-y: auto;
+    }
+
+    .sidebar {
+
+        left: 0;
+
+        transform: translateX(-100%);
+    }
+
+    .control-panel {
+
+        right: 0;
+
+        transform: translateX(100%);
+    }
+
+    .sidebar.active {
+
+        transform: translateX(0);
+    }
+
+    .control-panel.active {
+
+        transform: translateX(0);
+    }
+
+    .chat-main {
+
+        width: 100%;
+
+        padding: 10px;
+    }
+
+    .input-row {
+
+        flex-wrap: wrap;
+    }
+
+    #model-select {
+
+        width: 100%;
+    }
+
+    #send-btn {
+
+        width: 100%;
+    }
+}
+
+/* =====================================
+FORCE MOBILE SLIDE PANELS
+===================================== */
+
+@media (max-width: 768px) {
+
+    /* Hide desktop layout behavior */
+    .sidebar,
+    .control-panel {
+
+        position: fixed !important;
+
+        top: 50px !important;
+        bottom: 0 !important;
+
+        width: 280px !important;
+
+        display: flex !important;
+
+        flex-direction: column;
+
+        background: var(--sidebar-bg);
+
+        overflow-y: auto;
+
+        z-index: 9999;
+
+        transition: transform 0.3s ease;
+
+        box-shadow: 0 0 15px rgba(0,0,0,0.4);
+    }
+
+    /* LEFT PANEL */
+
+    .sidebar {
+
+        left: 0;
+
+        transform: translateX(-105%);
+    }
+
+    .sidebar.active {
+
+        transform: translateX(0);
+    }
+
+    /* RIGHT PANEL */
+
+    .control-panel {
+
+        right: 0;
+
+        transform: translateX(105%);
+    }
+
+    .control-panel.active {
+
+        transform: translateX(0);
+    }
+
+    /* MAIN CHAT AREA */
+
+    .chat-main {
+
+        width: 100%;
+
+        flex: 1;
+
+        padding: 10px;
+
+        overflow: hidden;
+    }
+}
+
+
+---------------------------------------------------------------------------
+FILE: app/state/agent_state.py
+---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+@dataclass
+class AgentState:
+    """The current runtime state of the agent."""
+    task: str
+    observations: List[dict] = field(default_factory=list)
+    actions: List[dict] = field(default_factory=list)
+    tool_results: List[dict] = field(default_factory=list)
+    final_response: Optional[str] = None
+
+
+
+---------------------------------------------------------------------------
+FILE: app/actions/action.py
+---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
+
+@dataclass
+class Action:
+    """An operation requested by the agent."""
+    name: str
+    tool: Optional[str] = None
+    arguments: Dict[str, Any] = field(default_factory=dict)
+
+
+
+---------------------------------------------------------------------------
+FILE: app/observations/observation.py
+---------------------------------------------------------------------------
+
+from dataclasses import dataclass
+
+@dataclass
+class Observation:
+    """The result of an action executed by the agent."""
+    action: str
+    success: bool
+    result: str
+
+
+
+===========================================================================
+SECTION 6: DATA FLOW DIAGRAMS
+===========================================================================
+
+STARTUP PIPELINE:
+  server.py lifespan
+    |-- AppConfig.refresh_all()          [write_markdown/app_config.py]
+    |   |-- scan_models()                -> config/models.json
+    |   |-- refresh_skills_json()        -> config/skills.json
+    |   +-- refresh_tools_md()           -> write_markdown/tools.md
+    |
+    +-- load_all()                       [read_markdown/markdown_loader.py]
+        |-- AGENT_LOADER.load()          -> config/chat_bot.json
+        |-- BASIC_LOADER.load()          -> config/chat_bot_basic.json
+        |-- TOOLS_LOADER.load()          -> config/tools.json
+        +-- build_skills_from_folder()   -> config/skills.json
+
+CHAT REQUEST FLOW:
+  Browser (app.js: send())
+    |-- POST /api/chat  {message, model, history}
+    |
+    v
+  server.py: chat(data)
+    |-- run_agent(message, history, model)  [chat_bot_agent.py]
+    |   |-- Read config/chat_bot.json
+    |   |-- PromptManager.build(config)     -> AgentProfile
+    |   |-- Map skill IDs -> SKILL_REGISTRY functions
+    |   |-- Agent(model, tools, profile)    [class_definition.py]
+    |   |-- Replay history into agent.messages
+    |   +-- agent.think(message)
+    |       |-- ask_llm(messages, model, tools)
+    |       |   +-- ollama.chat()
+    |       |-- If tool_calls: act() -> observe() -> ask_llm() again
+    |       +-- Return final content
+    |
+    +-- Return {"reply": ...}
+
+AGENT DEFINITION -> SYSTEM PROMPT:
+  chat_bot_agent.md
+    |-- ## identity -> name, default_model, type (NOT in prompt)
+    |-- ## skills   -> skills_table (IN prompt)
+    |-- ## role     -> role (IN prompt)
+    |-- ## purpose  -> purpose (IN prompt)
+    |-- ## personality -> personality (IN prompt)
+    |-- ## communication -> communication (IN prompt)
+    |-- ## boundaries -> boundaries (IN prompt)
+    |-- ## principles -> principles (IN prompt)
+    |-- ## decision_style -> decision_style (IN prompt)
+    +-- ## priorities -> priorities (NOT in prompt, doc only)
+
+
+===========================================================================
+END OF THE ENTIRE ENCHILADA
+===========================================================================

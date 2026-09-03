@@ -1,0 +1,17 @@
+# Python virtual environments (the project uses .venv)
+.venv/
+venv/
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+
+# Local log files
+server.out.log
+server.err.log
+*.log
+logs/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
