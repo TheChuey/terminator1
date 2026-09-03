@@ -1,0 +1,2644 @@
+<!DOCTYPE html>
+<!-- ================================================================
+     chat.html - STANDALONE AI CHAT PAGE
+     ================================================================
+     A self-contained chat page that talks to the same FastAPI backend
+     (/api/agents, /api/chat, /api/settings, /api/chat-save) as the main
+     app. It reuses the app's visual language (tokens, buttons, bubbles,
+     spacing) but keeps ALL of its HTML, CSS and JS in this one file so
+     it can be moved or modified easily.
+
+     Open it with an agent id in the URL:
+         /static/chat.html?agent=<agent_id>
+
+     Collapsible side panel:
+       The right panel is driven entirely by the PANEL_SECTIONS config
+       array further down. Add a section object to add future uses.
+       Every DOM class here is prefixed `sc-` so nothing collides with
+       the main app's `cw-` / `.btn` styles if they ever share a page.
+
+     One active chat session per agent (per tab):
+       A single ChatSession is kept per agent id in this tab. Sending
+       is routed through the currently active session; starting a chat
+       for another agent swaps the active session. The backend /api/chat
+       is stateless, so all history lives here in the browser.
+============================================================ -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agent Chat</title>
+
+<style>
+/* Design tokens below mirror the main app's styles.css :root. */
+
+:root {
+    --color-primary: #075985;
+    --color-primary-dark: #064e78;
+    --color-sidebar: #064f86;
+
+    --color-background: #f5f7f9;
+    --color-surface: #ffffff;
+    --color-surface-alt: #fafafa;
+
+    --color-text: #263238;
+    --color-text-soft: #374151;
+    --color-text-muted: #64748b;
+    --color-text-faint: #94a3b8;
+
+    --color-border: #e1e5e8;
+    --color-border-strong: #cbd5e1;
+
+    --color-accent: #dbeafe;
+    --color-success: #16803c;
+    --color-danger: #b91c1c;
+
+    --radius-small: 6px;
+    --radius-medium: 10px;
+    --radius-large: 14px;
+
+    --shadow-soft: 0 1px 3px rgba(15,23,42,.08);
+    --shadow-card: 0 4px 16px rgba(15,23,42,.06);
+
+    --header-height: 60px;
+    --panel-width: 310px;
+    --content-width: 920px;
+}
+
+/* -------------------- RESET -------------------- */
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-family: Arial, Helvetica, sans-serif;
+    color: var(--color-text);
+    background: var(--color-background);
+}
+
+/* -------------------- HEADER -------------------- */
+
+.sc-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 var(--header-height);
+    height: var(--header-height);
+    padding: 0 18px;
+    background: var(--color-sidebar);
+    color: white;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+    z-index: 10;
+}
+
+.sc-agent-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    border-radius: 10px;
+    background: rgba(255,255,255,.16);
+    border: 1px solid rgba(255,255,255,.18);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.sc-header-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.sc-agent-name {
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 700;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sc-agent-sub {
+    overflow: hidden;
+    margin-top: 1px;
+    color: rgba(255,255,255,.72);
+    font-size: 12px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sc-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.sc-header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 11px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: var(--radius-small);
+    background: rgba(255,255,255,.10);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: .15s ease;
+}
+
+.sc-header-btn:hover {
+    background: rgba(255,255,255,.20);
+}
+
+.sc-header-btn:focus-visible,
+.sc-btn:focus-visible,
+.sc-input:focus-visible {
+    outline: 2px solid rgba(7,89,133,.35);
+    outline-offset: 2px;
+}
+
+.sc-header-btn.danger:hover {
+    background: #fee2e2;
+    color: var(--color-danger);
+}
+
+/* -------------------- MAIN LAYOUT -------------------- */
+
+.sc-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.sc-main {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+}
+
+/* -------------------- CHAT -------------------- */
+
+.sc-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    flex: 1;
+    min-height: 0;
+    padding: 28px 24px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+}
+
+.sc-message-container {
+    width: min(100%, var(--content-width));
+    margin: 0 auto;
+}
+
+.sc-welcome {
+    width: min(100%, 620px);
+    margin: auto;
+    padding: 34px;
+    text-align: center;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-large);
+    box-shadow: var(--shadow-card);
+}
+
+.sc-welcome-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 14px;
+    border-radius: 14px;
+    background: var(--color-primary);
+    color: white;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.sc-welcome h2 {
+    margin: 0 0 8px;
+    font-size: 21px;
+    color: var(--color-text);
+}
+
+.sc-welcome p {
+    margin: 5px 0;
+    color: var(--color-text-muted);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.sc-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    width: 100%;
+}
+
+.sc-message.user {
+    justify-content: flex-end;
+}
+
+.sc-message-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    margin-top: 23px;
+    border-radius: 9px;
+    background: #e5e7eb;
+    color: var(--color-text-soft);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.sc-message-avatar.agent {
+    background: var(--color-primary);
+    color: white;
+}
+
+.sc-message-content {
+    min-width: 0;
+    max-width: min(78%, 760px);
+}
+
+.sc-message.user .sc-message-content {
+    max-width: min(78%, 700px);
+}
+
+.sc-message-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 18px;
+    margin: 0 4px 5px;
+}
+
+.sc-message-meta strong {
+    font-size: 12px;
+}
+
+.sc-message-meta span {
+    color: var(--color-text-faint);
+    font-size: 11px;
+}
+
+.sc-message-body {
+    padding: 13px 15px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-soft);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.sc-message.user .sc-message-body {
+    border-color: #c9def0;
+    background: #eaf3fc;
+}
+
+.sc-message.agent .sc-message-body {
+    border-left: 3px solid var(--color-primary);
+}
+
+.sc-message.system {
+    justify-content: center;
+}
+
+.sc-message.system .sc-message-body {
+    padding: 8px 14px;
+    border: 1px dashed var(--color-border-strong);
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-style: italic;
+    text-align: center;
+}
+
+/* Markdown */
+
+.sc-message-body p {
+    margin: 0 0 10px;
+}
+
+.sc-message-body p:last-child {
+    margin-bottom: 0;
+}
+
+.sc-message-body ul,
+.sc-message-body ol {
+    margin: 8px 0;
+    padding-left: 22px;
+}
+
+.sc-message-body li {
+    margin: 4px 0;
+}
+
+.sc-message-body code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #eef2f7;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+}
+
+.sc-message-body pre {
+    margin: 10px 0;
+    padding: 13px;
+    overflow-x: auto;
+    border-radius: 8px;
+    background: #17202a;
+    color: #f8fafc;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.sc-message-body pre code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+}
+
+.sc-message-body a {
+    color: var(--color-primary);
+}
+
+/* Typing */
+
+.sc-typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 18px;
+}
+
+.sc-typing span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-text-faint);
+    animation: typingPulse 1.2s infinite ease-in-out;
+}
+
+.sc-typing span:nth-child(2) {
+    animation-delay: .15s;
+}
+
+.sc-typing span:nth-child(3) {
+    animation-delay: .30s;
+}
+
+@keyframes typingPulse {
+    0%, 60%, 100% { opacity: .25; }
+    30% { opacity: 1; }
+}
+
+/* -------------------- COMPOSER -------------------- */
+
+.sc-composer {
+    flex: 0 0 auto;
+    padding: 13px 20px 16px;
+    border-top: 1px solid var(--color-border);
+    background: rgba(250,250,250,.96);
+}
+
+.sc-composer-inner {
+    width: min(100%, var(--content-width));
+    margin: 0 auto;
+}
+
+.sc-save-status {
+    min-height: 18px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-alt);
+    color: var(--color-text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.sc-save-status.ok {
+    color: var(--color-success);
+}
+
+.sc-save-status.error {
+    color: var(--color-danger);
+}
+
+.sc-input-wrap {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 7px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 12px;
+    background: white;
+    box-shadow: 0 2px 8px rgba(15,23,42,.05);
+    transition: .15s ease;
+}
+
+.sc-input-wrap:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(7,89,133,.08);
+}
+
+.sc-input {
+    width: 100%;
+    min-height: 42px;
+    max-height: 170px;
+    padding: 10px 11px;
+    border: 0;
+    outline: 0;
+    resize: none;
+    overflow-y: auto;
+    background: transparent;
+    color: var(--color-text);
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.sc-input::placeholder {
+    color: var(--color-text-faint);
+}
+
+.sc-send {
+    min-width: 74px;
+    height: 40px;
+}
+
+.sc-composer-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 3px 0;
+}
+
+.sc-input-hint {
+    color: var(--color-text-faint);
+    font-size: 11px;
+}
+
+/* -------------------- BUTTONS -------------------- */
+
+.sc-btn {
+    border: 1px solid transparent;
+    border-radius: var(--radius-small);
+    padding: 8px 13px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: .15s ease;
+}
+
+.sc-btn:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+}
+
+.sc-btn-primary {
+    background: var(--color-primary);
+    color: white;
+}
+
+.sc-btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+}
+
+.sc-btn-secondary {
+    border-color: var(--color-border-strong);
+    background: white;
+    color: var(--color-text-soft);
+}
+
+.sc-btn-secondary:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+/* -------------------- RIGHT PANEL -------------------- */
+
+.sc-panel {
+    display: flex;
+    flex-direction: column;
+    width: var(--panel-width);
+    flex: 0 0 var(--panel-width);
+    border-left: 1px solid var(--color-border);
+    background: var(--color-surface);
+    box-shadow: -2px 0 8px rgba(15,23,42,.03);
+    transition: width .2s ease;
+}
+
+.sc-panel.hidden {
+    display: none;
+}
+
+.sc-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 48px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.sc-panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.sc-panel-sections {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.sc-panel-section {
+    margin-bottom: 18px;
+}
+
+.sc-panel-section:last-child {
+    margin-bottom: 0;
+}
+
+.sc-panel-section-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+}
+
+.sc-field {
+    margin-bottom: 11px;
+}
+
+.sc-field-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+}
+
+.sc-field-value {
+    display: block;
+    padding: 9px 10px;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--color-border);
+    border-radius: 7px;
+    background: var(--color-surface-alt);
+    color: var(--color-text-soft);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.sc-empty-note {
+    margin: 0;
+    color: var(--color-text-faint);
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* Toggle switch (used by checkbox panel fields) - mirrors the main
+   app's cw-switch styling. */
+
+.sc-field-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.sc-switch {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 38px;
+    height: 22px;
+}
+
+.sc-switch input {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.sc-switch-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: #cbd5e1;
+    transition: background .15s ease;
+    pointer-events: none;
+}
+
+.sc-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,.25);
+    transition: transform .15s ease;
+}
+
+.sc-switch input:checked + .sc-switch-track {
+    background: var(--color-primary);
+}
+
+.sc-switch input:checked + .sc-switch-track::after {
+    transform: translateX(16px);
+}
+
+/* -------------------- SCROLLBARS -------------------- */
+
+.sc-messages::-webkit-scrollbar,
+.sc-panel-sections::-webkit-scrollbar,
+.sc-input::-webkit-scrollbar {
+    width: 7px;
+}
+
+.sc-messages::-webkit-scrollbar-thumb,
+.sc-panel-sections::-webkit-scrollbar-thumb,
+.sc-input::-webkit-scrollbar-thumb {
+    border-radius: 10px;
+    background: #cbd5e1;
+}
+
+.sc-messages::-webkit-scrollbar-track,
+.sc-panel-sections::-webkit-scrollbar-track,
+.sc-input::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* -------------------- RESPONSIVE -------------------- */
+
+@media (max-width: 760px) {
+    :root {
+        --panel-width: 270px;
+    }
+
+    .sc-message-content,
+    .sc-message.user .sc-message-content {
+        max-width: 88%;
+    }
+
+    .sc-messages {
+        padding: 18px 14px;
+    }
+
+    .sc-composer {
+        padding: 10px 12px 13px;
+    }
+
+    .sc-header-btn {
+        padding: 0 9px;
+    }
+
+    .sc-header-btn .label {
+        display: none;
+    }
+}
+
+@media (max-width: 560px) {
+    .sc-panel {
+        position: absolute;
+        inset: var(--header-height) 0 0 auto;
+        width: 290px;
+        flex-basis: 290px;
+        z-index: 5;
+        box-shadow: -6px 0 20px rgba(15,23,42,.12);
+    }
+
+    .sc-message-content,
+    .sc-message.user .sc-message-content {
+        max-width: 92%;
+    }
+
+    .sc-input-hint {
+        display: none;
+    }
+
+    .sc-header {
+        padding: 0 11px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ============================================================
+     HEADER
+     ============================================================ -->
+
+<header class="sc-header">
+
+    <div class="sc-agent-avatar" id="sc-avatar">AI</div>
+
+    <div class="sc-header-info">
+        <div class="sc-agent-name" id="sc-agent-name">Assistant</div>
+        <div class="sc-agent-sub" id="sc-agent-sub">AI agent</div>
+    </div>
+
+    <div class="sc-header-actions">
+
+        <button
+            type="button"
+            class="sc-header-btn"
+            id="sc-panel-toggle"
+            aria-pressed="true"
+            title="Toggle agent information panel">
+            <span id="sc-panel-toggle-icon">◧</span>
+            <span class="label" id="sc-panel-toggle-label">Panel</span>
+        </button>
+
+        <button
+            type="button"
+            class="sc-header-btn"
+            id="sc-clear"
+            title="Start a new chat">
+            <span>＋</span>
+            <span class="label">New Chat</span>
+        </button>
+
+        <button
+            type="button"
+            class="sc-header-btn danger"
+            id="sc-close"
+            title="Close chat">
+            <span>×</span>
+            <span class="label">Close</span>
+        </button>
+
+    </div>
+</header>
+
+
+<!-- ============================================================
+     APPLICATION BODY
+     ============================================================ -->
+
+<div class="sc-body">
+
+    <!-- ================= CHAT ================= -->
+
+    <main class="sc-main">
+
+        <div
+            class="sc-messages"
+            id="sc-messages"
+            aria-live="polite">
+        </div>
+
+
+        <!-- ================= COMPOSER ================= -->
+
+        <div class="sc-composer">
+
+            <div class="sc-composer-inner">
+
+                <div class="sc-input-wrap">
+
+                    <textarea
+                        class="sc-input"
+                        id="sc-input"
+                        rows="1"
+                        placeholder="Message the agent..."
+                        aria-label="Message">
+                    </textarea>
+
+                    <button
+                        type="button"
+                        class="sc-btn sc-btn-primary sc-send"
+                        id="sc-send">
+                        Send
+                    </button>
+
+                </div>
+
+                <div class="sc-composer-footer">
+                    <span class="sc-input-hint">
+                        Enter sends · Shift + Enter adds a new line
+                    </span>
+                </div>
+
+            </div>
+
+        </div>
+
+    </main>
+
+
+    <!-- ================= RIGHT PANEL ================= -->
+
+    <aside
+        class="sc-panel"
+        id="sc-panel">
+
+        <div class="sc-panel-header">
+            <span class="sc-panel-title">Agent Workspace</span>
+        </div>
+
+        <div
+            class="sc-panel-status"
+            id="sc-save-status"
+            role="status">
+        </div>
+
+        <div
+            class="sc-panel-sections"
+            id="sc-panel-sections">
+        </div>
+
+    </aside>
+
+</div>
+
+
+<script>
+"use strict";
+
+/* ============================================================
+   1. CONFIGURATION
+   Add future panel sections here.
+   ============================================================ */
+
+/* Auto-hi text + default. This is an experimental feature that may be
+   removed later, so it stays isolated in one small config + one function. */
+const AUTO_HI_TEXT = "hi";
+const AUTO_HI_DEFAULT = true;
+
+const PANEL_SECTIONS = [
+    {
+        title: "Agent Information",
+        fields: [
+            {
+                type: "text",
+                label: "Status",
+                value: "Ready"
+            },
+            {
+                type: "text",
+                label: "Agent ID",
+                valueFrom: "agentId"
+            },
+            {
+                type: "text",
+                label: "Description",
+                valueFrom: "description"
+            }
+        ]
+    },
+    {
+        title: "Actions",
+        fields: [
+            {
+                type: "button",
+                label: "Clear Chat",
+                action: "clearChat"
+            }
+        ]
+    },
+    {
+        title: "Behavior",
+        fields: [
+            {
+                type: "checkbox",
+                name: "autoHi",
+                label: '"hi" on a new chat',
+                value: AUTO_HI_DEFAULT
+            }
+        ]
+    }
+];
+
+
+/* ============================================================
+   2. HELPERS
+   ============================================================ */
+
+function initials(name) {
+
+    if (!name) return "AI";
+
+    const words = String(name)
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+    if (words.length >= 2) {
+        return (
+            words[0][0] +
+            words[1][0]
+        ).toUpperCase();
+    }
+
+    return String(name)
+        .slice(0, 2)
+        .toUpperCase();
+}
+
+
+function formatTime(isoString) {
+
+    const date = isoString
+        ? new Date(isoString)
+        : new Date();
+
+    const time = date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+
+    if (
+        date.toDateString() ===
+        new Date().toDateString()
+    ) {
+        return time;
+    }
+
+    return `${date.toLocaleDateString([], {
+        month: "short",
+        day: "numeric"
+    })}, ${time}`;
+}
+
+
+function el(tag, className, text) {
+
+    const node = document.createElement(tag);
+
+    if (className) {
+        node.className = className;
+    }
+
+    if (
+        text !== undefined &&
+        text !== null
+    ) {
+        node.textContent = text;
+    }
+
+    return node;
+}
+
+
+/* ============================================================
+   3. SAFE MARKDOWN
+   ============================================================ */
+
+const INLINE_RULES = [
+    {
+        tag: "code",
+        re: /`([^`\n]+)`/
+    },
+    {
+        tag: "strong",
+        re: /\*\*([^*\n]+)\*\*/
+    },
+    {
+        tag: "em",
+        re: /\*([^*\n]+)\*/
+    },
+    {
+        tag: "a",
+        re: /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/
+    }
+];
+
+
+function renderMarkdown(text) {
+
+    const fragment =
+        document.createDocumentFragment();
+
+    String(text ?? "")
+        .split("```")
+        .forEach((chunk, index) => {
+
+            if (index % 2 === 1) {
+                fragment.appendChild(
+                    buildCodeBlock(chunk)
+                );
+            } else {
+                buildBlocks(chunk)
+                    .forEach(node =>
+                        fragment.appendChild(node)
+                    );
+            }
+        });
+
+    return fragment;
+}
+
+
+function buildCodeBlock(chunk) {
+
+    const codeText =
+        chunk.replace(
+            /^[a-zA-Z0-9_+-]*\n/,
+            ""
+        );
+
+    const pre = el("pre");
+    const code = el(
+        "code",
+        "",
+        codeText.trim()
+    );
+
+    pre.appendChild(code);
+
+    return pre;
+}
+
+
+function buildBlocks(text) {
+
+    const nodes = [];
+
+    String(text)
+        .split(/\n{2,}/)
+        .map(part => part.trim())
+        .filter(Boolean)
+        .forEach(block => {
+            nodes.push(buildBlock(block));
+        });
+
+    return nodes;
+}
+
+
+function buildBlock(block) {
+
+    const lines = block.split("\n");
+
+    if (
+        lines.length > 0 &&
+        lines.every(l =>
+            /^\s*[-*]\s+\S/.test(l)
+        )
+    ) {
+        return buildList(
+            lines,
+            "ul",
+            l => l.replace(
+                /^\s*[-*]\s+/,
+                ""
+            )
+        );
+    }
+
+    if (
+        lines.length > 0 &&
+        lines.every(l =>
+            /^\s*\d+[.)]\s+\S/.test(l)
+        )
+    ) {
+        return buildList(
+            lines,
+            "ol",
+            l => l.replace(
+                /^\s*\d+[.)]\s+/,
+                ""
+            )
+        );
+    }
+
+    return buildParagraph(lines);
+}
+
+
+function buildList(
+    lines,
+    tag,
+    stripMarker
+) {
+
+    const list = el(tag);
+
+    lines.forEach(line => {
+
+        const item = el("li");
+
+        renderInline(
+            stripMarker(line),
+            item
+        );
+
+        list.appendChild(item);
+    });
+
+    return list;
+}
+
+
+function buildParagraph(lines) {
+
+    const p = el("p");
+
+    lines.forEach((line, index) => {
+
+        if (index > 0) {
+            p.appendChild(
+                document.createTextNode("\n")
+            );
+        }
+
+        renderInline(line, p);
+    });
+
+    return p;
+}
+
+
+function renderInline(line, target) {
+
+    let best = null;
+
+    INLINE_RULES.forEach(rule => {
+
+        const match = rule.re.exec(line);
+
+        if (!match) return;
+
+        const better =
+            best === null ||
+            match.index < best.match.index ||
+            (
+                match.index === best.match.index &&
+                match[0].length > best.match[0].length
+            );
+
+        if (better) {
+            best = {
+                rule,
+                match
+            };
+        }
+    });
+
+    if (!best) {
+
+        target.appendChild(
+            document.createTextNode(line)
+        );
+
+        return;
+    }
+
+    const {
+        rule,
+        match
+    } = best;
+
+    const [
+        raw,
+        ...groups
+    ] = match;
+
+    if (match.index > 0) {
+
+        target.appendChild(
+            document.createTextNode(
+                line.slice(0, match.index)
+            )
+        );
+    }
+
+    target.appendChild(
+        buildInlineNode(
+            rule.tag,
+            groups
+        )
+    );
+
+    renderInline(
+        line.slice(
+            match.index + raw.length
+        ),
+        target
+    );
+}
+
+
+function buildInlineNode(tag, groups) {
+
+    if (tag === "a") {
+
+        const link = el(
+            "a",
+            "",
+            groups[0]
+        );
+
+        link.href = groups[1];
+        link.target = "_blank";
+        link.rel =
+            "noopener noreferrer";
+
+        return link;
+    }
+
+    return el(
+        tag,
+        "",
+        groups[0]
+    );
+}
+
+
+/* ============================================================
+   4. PANEL
+   ============================================================ */
+
+function buildPanel(agent) {
+
+    const sections =
+        document.getElementById(
+            "sc-panel-sections"
+        );
+
+    sections.replaceChildren();
+
+    const resolved =
+        PANEL_SECTIONS.map(section => ({
+
+            ...section,
+
+            fields:
+                section.fields.map(field => {
+
+                    if (
+                        field.valueFrom ===
+                        "agentId"
+                    ) {
+                        return {
+                            ...field,
+                            value: agent.id
+                        };
+                    }
+
+                    if (
+                        field.valueFrom ===
+                        "description"
+                    ) {
+                        return {
+                            ...field,
+                            value:
+                                agent.description
+                        };
+                    }
+
+                    return field;
+                })
+        }));
+
+
+    resolved.forEach(section => {
+
+        const box = el(
+            "section",
+            "sc-panel-section"
+        );
+
+        const head = el(
+            "div",
+            "sc-panel-section-head",
+            section.title
+        );
+
+        box.appendChild(head);
+
+        const body = el(
+            "div"
+        );
+
+        if (
+            Array.isArray(section.fields) &&
+            section.fields.length
+        ) {
+
+            section.fields.forEach(field => {
+
+                body.appendChild(
+                    createField(field)
+                );
+            });
+
+        } else {
+
+            body.appendChild(
+                el(
+                    "p",
+                    "sc-empty-note",
+                    "No options yet."
+                )
+            );
+        }
+
+        box.appendChild(body);
+        sections.appendChild(box);
+    });
+}
+
+
+function createField(field) {
+
+    switch (field.type || "text") {
+
+        case "text": {
+
+            const row = el(
+                "div",
+                "sc-field"
+            );
+
+            if (field.label) {
+
+                row.appendChild(
+                    el(
+                        "span",
+                        "sc-field-label",
+                        field.label
+                    )
+                );
+            }
+
+            row.appendChild(
+                el(
+                    "span",
+                    "sc-field-value",
+                    field.value !==
+                    undefined &&
+                    field.value !== null
+                        ? field.value
+                        : "—"
+                )
+            );
+
+            return row;
+        }
+
+
+        case "button": {
+
+            const button = el(
+                "button",
+                "sc-btn sc-btn-secondary",
+                field.label || "Action"
+            );
+
+            button.type = "button";
+            button.style.width = "100%";
+            button.style.marginBottom = "8px";
+
+            button.addEventListener(
+                "click",
+                () => {
+
+                    const action =
+                        window.__scActions?.[
+                            field.action
+                        ];
+
+                    if (
+                        typeof action ===
+                        "function"
+                    ) {
+                        action();
+                    }
+                }
+            );
+
+            return button;
+        }
+
+
+        case "checkbox": {
+
+            const row = el(
+                "div",
+                "sc-field sc-field-toggle"
+            );
+
+            if (field.label) {
+
+                row.appendChild(
+                    el(
+                        "span",
+                        "sc-field-label",
+                        field.label
+                    )
+                );
+            }
+
+            const label = el(
+                "label",
+                "sc-switch"
+            );
+
+            const checkbox =
+                document.createElement(
+                    "input"
+                );
+
+            checkbox.type = "checkbox";
+            checkbox.checked =
+                Boolean(field.value);
+
+            if (field.name) {
+                checkbox.dataset.name =
+                    field.name;
+            }
+
+            label.appendChild(checkbox);
+            label.appendChild(
+                el("span", "sc-switch-track")
+            );
+
+            row.appendChild(label);
+
+            return row;
+        }
+
+
+        default:
+
+            return createField({
+                ...field,
+                type: "text"
+            });
+    }
+}
+
+
+/* ============================================================
+   5. CHAT SESSION
+   ============================================================ */
+
+class ChatSession {
+
+    constructor({
+        agentId = "",
+        agentName = "",
+        model = ""
+    } = {}) {
+
+        this.agentId = agentId;
+        this.agentName = agentName;
+        this.model = model;
+
+        this.title = "New chat";
+        this.messages = [];
+
+        this.startedAt =
+            new Date().toISOString();
+
+        this.isWaiting = false;
+    }
+
+
+    get isEmpty() {
+        return this.messages.length === 0;
+    }
+
+
+    addUserMessage(text) {
+
+        const message = {
+            role: "user",
+            author: "You",
+            content: text,
+            timestamp:
+                new Date().toISOString()
+        };
+
+        this.messages.push(message);
+
+        if (
+            this.messages.filter(
+                m => m.role === "user"
+            ).length === 1
+        ) {
+
+            this.title =
+                text.length > 50
+                    ? text.slice(0, 50).trimEnd() + "..."
+                    : text;
+        }
+
+        return message;
+    }
+
+
+    addAssistantMessage(
+        text,
+        author = this.agentName || "AI"
+    ) {
+
+        const message = {
+            role: "assistant",
+            author,
+            content: text || "(no reply)",
+            timestamp:
+                new Date().toISOString()
+        };
+
+        this.messages.push(message);
+
+        return message;
+    }
+
+
+    getApiHistory() {
+
+        return this.messages
+            .filter(
+                m =>
+                    m.role === "user" ||
+                    m.role === "assistant"
+            )
+            .slice(-20)
+            .map(m => ({
+                role: m.role,
+                content: m.content
+            }));
+    }
+
+
+    get transcript() {
+
+        const lines = [];
+
+        lines.push(
+            `Agent: ${this.agentName}`
+        );
+
+        lines.push(
+            `Title: ${this.title}`
+        );
+
+        lines.push(
+            `Started: ${new Date(
+                this.startedAt
+            ).toLocaleString()}`
+        );
+
+        lines.push(
+            "".padEnd(40, "-")
+        );
+
+        this.messages.forEach(message => {
+
+            lines.push(
+                `${message.author} (${formatTime(
+                    message.timestamp
+                )}):`
+            );
+
+            lines.push(message.content);
+            lines.push("");
+        });
+
+        return lines.join("\n");
+    }
+
+
+    get transcriptFileName() {
+
+        const safe =
+            (this.title || "chat")
+                .replace(
+                    /[^a-z0-9-]+/gi,
+                    "-"
+                )
+                .slice(0, 60);
+
+        const timestamp =
+            new Date()
+                .toISOString()
+                .replace(/[-:]/g, "")
+                .slice(0, 12);
+
+        return `${safe}-${timestamp}`
+            .toLowerCase();
+    }
+
+
+    newChat() {
+
+        this.messages = [];
+        this.title = "New chat";
+
+        this.startedAt =
+            new Date().toISOString();
+
+        this.isWaiting = false;
+    }
+}
+
+
+/* ============================================================
+   6. APPLICATION STATE
+   ============================================================ */
+
+const agentsById = new Map();
+const sessions = new Map();
+
+let activeAgent = null;
+let activeSession = null;
+let settings = {};
+
+
+/* ============================================================
+   7. DOM REFERENCES
+   ============================================================ */
+
+const DOM = {
+
+    messages:
+        document.getElementById(
+            "sc-messages"
+        ),
+
+    input:
+        document.getElementById(
+            "sc-input"
+        ),
+
+    send:
+        document.getElementById(
+            "sc-send"
+        ),
+
+    saveStatus:
+        document.getElementById(
+            "sc-save-status"
+        ),
+
+    panelToggle:
+        document.getElementById(
+            "sc-panel-toggle"
+        ),
+
+    panelToggleLabel:
+        document.getElementById(
+            "sc-panel-toggle-label"
+        ),
+
+    panel:
+        document.getElementById(
+            "sc-panel"
+        ),
+
+    close:
+        document.getElementById(
+            "sc-close"
+        ),
+
+    clear:
+        document.getElementById(
+            "sc-clear"
+        ),
+
+    agentName:
+        document.getElementById(
+            "sc-agent-name"
+        ),
+
+    agentSub:
+        document.getElementById(
+            "sc-agent-sub"
+        ),
+
+    avatar:
+        document.getElementById(
+            "sc-avatar"
+        )
+};
+
+
+/* ============================================================
+   8. UI STATE
+   ============================================================ */
+
+function setWaiting(waiting) {
+
+    if (!activeSession) return;
+
+    activeSession.isWaiting =
+        Boolean(waiting);
+
+    DOM.input.disabled = waiting;
+    DOM.send.disabled = waiting;
+
+    if (waiting) {
+        showTyping();
+    } else {
+        removeTyping();
+    }
+}
+
+
+function setSaveStatus(
+    text,
+    kind = ""
+) {
+
+    DOM.saveStatus.textContent =
+        text || "";
+
+    DOM.saveStatus.className =
+        "sc-save-status " + kind;
+}
+
+
+function scrollToBottom() {
+
+    DOM.messages.scrollTop =
+        DOM.messages.scrollHeight;
+}
+
+
+/* ============================================================
+   9. MESSAGE RENDERING
+   ============================================================ */
+
+function addBubble(
+    role,
+    content,
+    author,
+    timestamp = new Date()
+) {
+
+    const message =
+        el(
+            "div",
+            `sc-message ${role}`
+        );
+
+    if (role !== "system") {
+
+        const avatar =
+            el(
+                "div",
+                "sc-message-avatar"
+            );
+
+        if (role !== "user") {
+            avatar.classList.add("agent");
+        }
+
+        avatar.textContent =
+            role === "user"
+                ? "U"
+                : initials(
+                    author ||
+                    activeAgent?.name
+                );
+
+        message.appendChild(avatar);
+    }
+
+
+    const contentWrap =
+        el(
+            "div",
+            "sc-message-content"
+        );
+
+
+    if (role !== "system") {
+
+        const meta =
+            el(
+                "div",
+                "sc-message-meta"
+            );
+
+        meta.appendChild(
+            el(
+                "strong",
+                "",
+                author ||
+                (
+                    role === "user"
+                        ? "You"
+                        : activeAgent.name
+                )
+            )
+        );
+
+        meta.appendChild(
+            el(
+                "span",
+                "",
+                formatTime(timestamp)
+            )
+        );
+
+        contentWrap.appendChild(meta);
+    }
+
+
+    const body =
+        el(
+            "div",
+            "sc-message-body"
+        );
+
+    body.appendChild(
+        renderMarkdown(content)
+    );
+
+    contentWrap.appendChild(body);
+    message.appendChild(contentWrap);
+
+    DOM.messages.appendChild(message);
+
+    scrollToBottom();
+}
+
+
+function clearMessages() {
+
+    DOM.messages.replaceChildren();
+
+    renderWelcome();
+}
+
+
+function renderWelcome() {
+
+    if (!activeAgent) return;
+
+    const box =
+        el(
+            "div",
+            "sc-welcome"
+        );
+
+    box.appendChild(
+        el(
+            "div",
+            "sc-welcome-icon",
+            initials(activeAgent.name)
+        )
+    );
+
+    box.appendChild(
+        el(
+            "h2",
+            "",
+            `Chat with ${activeAgent.name}`
+        )
+    );
+
+    box.appendChild(
+        el(
+            "p",
+            "",
+            "Start a conversation with this AI agent."
+        )
+    );
+
+    if (activeAgent.description) {
+
+        box.appendChild(
+            el(
+                "p",
+                "",
+                activeAgent.description
+            )
+        );
+    }
+
+    DOM.messages.appendChild(box);
+}
+
+
+/* ============================================================
+   10. TYPING INDICATOR
+   ============================================================ */
+
+function showTyping() {
+
+    removeTyping();
+
+    const message =
+        el(
+            "div",
+            "sc-message agent"
+        );
+
+    message.dataset.typing = "1";
+
+    const avatar =
+        el(
+            "div",
+            "sc-message-avatar agent",
+            initials(
+                activeAgent.name
+            )
+        );
+
+    message.appendChild(avatar);
+
+    const content =
+        el(
+            "div",
+            "sc-message-content"
+        );
+
+    content.appendChild(
+        el(
+            "div",
+            "sc-message-meta"
+        )
+    );
+
+    const body =
+        el(
+            "div",
+            "sc-message-body"
+        );
+
+    const dots =
+        el(
+            "span",
+            "sc-typing"
+        );
+
+    dots.appendChild(
+        document.createElement("span")
+    );
+
+    dots.appendChild(
+        document.createElement("span")
+    );
+
+    dots.appendChild(
+        document.createElement("span")
+    );
+
+    body.appendChild(dots);
+    content.appendChild(body);
+    message.appendChild(content);
+
+    DOM.messages.appendChild(message);
+
+    scrollToBottom();
+}
+
+
+function removeTyping() {
+
+    const typing =
+        DOM.messages.querySelector(
+            '[data-typing="1"]'
+        );
+
+    if (typing) {
+        typing.remove();
+    }
+}
+
+
+/* ============================================================
+   11. CHAT API
+   ============================================================ */
+
+async function sendChat({
+    message,
+    agentId = "",
+    model = "",
+    history = []
+}) {
+
+    const response =
+        await fetch(
+            "/api/chat",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body: JSON.stringify({
+                    message,
+                    model,
+                    agent_id: agentId,
+                    history
+                })
+            }
+        );
+
+    if (!response.ok) {
+
+        throw new Error(
+            `Server error ${response.status} for /api/chat`
+        );
+    }
+
+    const data =
+        await response.json();
+
+    return data.reply;
+}
+
+
+/* ============================================================
+   12. SAVE CHAT
+   ============================================================ */
+
+async function autoSave(session) {
+
+    if (
+        !session ||
+        session.isEmpty
+    ) {
+        return;
+    }
+
+    const path =
+        settings.chatSavePath ||
+        "data/chats";
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/chat-save",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+
+                        path,
+
+                        fileName:
+                            session.transcriptFileName,
+
+                        title:
+                            session.title,
+
+                        agentName:
+                            session.agentName,
+
+                        model:
+                            session.model,
+
+                        content:
+                            session.transcript
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
+
+        if (
+            !response.ok ||
+            !result.saved
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Save failed."
+            );
+        }
+
+        setSaveStatus(
+            `Saved: ${result.file}`,
+            "ok"
+        );
+
+    } catch (error) {
+
+        setSaveStatus(
+            `Save failed: ${error.message}`,
+            "error"
+        );
+    }
+}
+
+
+/* ============================================================
+   13. SEND FLOW
+   ============================================================ */
+
+async function handleSend() {
+
+    const text =
+        DOM.input.value.trim();
+
+    if (
+        !text ||
+        !activeSession ||
+        activeSession.isWaiting
+    ) {
+        return;
+    }
+
+    DOM.input.value = "";
+    autogrow();
+
+    activeSession.addUserMessage(text);
+
+    addBubble(
+        "user",
+        text,
+        "You"
+    );
+
+    setWaiting(true);
+    setSaveStatus("");
+
+    try {
+
+        const reply =
+            await sendChat({
+
+                message: text,
+
+                agentId:
+                    activeSession.agentId,
+
+                model:
+                    activeSession.model,
+
+                history:
+                    activeSession.getApiHistory()
+            });
+
+        activeSession.addAssistantMessage(
+            reply,
+            activeAgent.name
+        );
+
+        addBubble(
+            "agent",
+            reply,
+            activeAgent.name
+        );
+
+        await autoSave(
+            activeSession
+        );
+
+        if (
+            !DOM.saveStatus.classList.contains(
+                "error"
+            )
+        ) {
+            setSaveStatus(
+                "Chat saved.",
+                "ok"
+            );
+        }
+
+    } catch (error) {
+
+        addBubble(
+            "system",
+            `Sorry - that failed. ${error.message}`
+        );
+
+        setSaveStatus(
+            `Send failed: ${error.message}`,
+            "error"
+        );
+
+    } finally {
+
+        setWaiting(false);
+        DOM.input.focus();
+    }
+}
+
+
+/* ============================================================
+   14. PANEL
+   ============================================================ */
+
+function syncPanelToggle() {
+
+    const hidden =
+        DOM.panel.classList.contains(
+            "hidden"
+        );
+
+    DOM.panelToggle.setAttribute(
+        "aria-pressed",
+        String(!hidden)
+    );
+
+    DOM.panelToggleLabel.textContent =
+        hidden
+            ? "Show panel"
+            : "Hide panel";
+}
+
+
+function togglePanel() {
+
+    DOM.panel.classList.toggle(
+        "hidden"
+    );
+
+    syncPanelToggle();
+}
+
+
+/* ============================================================
+   15. PANEL STATE + ACTIONS
+   ============================================================ */
+
+/* Collect the current value of every panel control that has a
+   data-name. Checkboxes return booleans; everything else returns
+   its value string. Kept separate from rendering so panel state
+   is easy to read (e.g. for the auto-hi feature). */
+function getPanelValues() {
+
+    const values = {};
+
+    document
+        .querySelectorAll(
+            ".sc-panel-sections [data-name]"
+        )
+        .forEach(node => {
+
+            if (node.type === "checkbox") {
+                values[node.dataset.name] =
+                    node.checked;
+            } else {
+                values[node.dataset.name] =
+                    node.value;
+            }
+        });
+
+    return values;
+}
+
+
+/* Start the current agent completely fresh: wipe its session data
+   and the rendered bubbles, then prepare the input for the next
+   message. This is the single source of truth used by the header
+   "New Chat" button and the side panel "Clear Chat" action. */
+function startNewChat() {
+
+    if (activeSession) {
+        activeSession.newChat();
+    }
+
+    clearMessages();
+
+    setSaveStatus(
+        "Chat cleared.",
+        "ok"
+    );
+
+    DOM.input.focus();
+}
+
+
+/* Experimental auto-"hi" feature (may be removed later, kept isolated).
+   When the panel's autoHi checkbox is enabled and the current agent has
+   no messages yet (a fresh chat), inject "hi" into the input and press
+   Send automatically so the conversation starts itself. */
+function maybeAutoHi() {
+
+    if (
+        !activeSession ||
+        !activeSession.isEmpty ||
+        !DOM.input
+    ) {
+        return;
+    }
+
+    const values = getPanelValues();
+
+    if (values.autoHi !== true) {
+        return;
+    }
+
+    DOM.input.value = AUTO_HI_TEXT;
+    autogrow();
+
+    handleSend();
+}
+
+
+window.__scActions = {
+
+    save() {
+
+        if (
+            !activeSession ||
+            activeSession.isEmpty
+        ) {
+
+            setSaveStatus(
+                "Nothing to save yet.",
+                "error"
+            );
+
+            return;
+        }
+
+        autoSave(activeSession);
+    },
+
+    clearChat() {
+
+        startNewChat();
+    }
+};
+
+
+/* ============================================================
+   16. AGENT SWITCHING
+   ============================================================ */
+
+function switchToAgent(agent) {
+
+    activeAgent = agent;
+
+    if (!sessions.has(agent.id)) {
+
+        sessions.set(
+            agent.id,
+
+            new ChatSession({
+                agentId: agent.id,
+                agentName: agent.name,
+                model:
+                    settings.defaultModel ||
+                    ""
+            })
+        );
+    }
+
+    activeSession =
+        sessions.get(agent.id);
+
+    DOM.agentName.textContent =
+        agent.name;
+
+    DOM.agentSub.textContent =
+        agent.description ||
+        "AI agent";
+
+    DOM.avatar.textContent =
+        initials(agent.name);
+
+    DOM.input.placeholder =
+        `Message ${agent.name}...`;
+
+    setSaveStatus("");
+
+    clearMessages();
+
+    buildPanel(agent);
+}
+
+
+/* ============================================================
+   17. INPUT AUTO GROW
+   ============================================================ */
+
+function autogrow() {
+
+    DOM.input.style.height =
+        "auto";
+
+    DOM.input.style.height =
+        `${Math.min(
+            DOM.input.scrollHeight,
+            170
+        )}px`;
+}
+
+
+/* ============================================================
+   18. APPLICATION BOOT
+   ============================================================ */
+
+async function boot() {
+
+    const params =
+        new URLSearchParams(
+            window.location.search
+        );
+
+    const agentId =
+        params.get("agent") || "";
+
+
+    /* Load settings */
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/settings"
+            );
+
+        if (response.ok) {
+
+            settings =
+                (
+                    await response.json()
+                ).settings || {};
+        }
+
+    } catch (_) {
+        /* Defaults remain active. */
+    }
+
+
+    /* Load agents */
+
+    let agents = [];
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/agents"
+            );
+
+        if (response.ok) {
+
+            agents =
+                (
+                    await response.json()
+                ).agents || [];
+        }
+
+    } catch (_) {
+        /* Error handled below. */
+    }
+
+
+    const target =
+        agents.find(
+            agent =>
+                String(agent.id) ===
+                String(agentId)
+        ) ||
+        agents[0] ||
+        null;
+
+
+    if (!target) {
+
+        DOM.agentName.textContent =
+            "No agents found";
+
+        DOM.agentSub.textContent =
+            "Start the app server and refresh.";
+
+        addBubble(
+            "system",
+            "No agents were found. Start the server (python server.py) and reload this page."
+        );
+
+        return;
+    }
+
+
+    agents.forEach(agent => {
+
+        agentsById.set(
+            agent.id,
+            agent
+        );
+    });
+
+
+    switchToAgent(target);
+
+    /* Auto-"hi" on a fresh chat (if the Behavior checkbox is enabled). */
+    maybeAutoHi();
+
+    DOM.input.focus();
+}
+
+
+/* ============================================================
+   19. EVENT WIRING
+   ============================================================ */
+
+DOM.send.addEventListener(
+    "click",
+    handleSend
+);
+
+
+DOM.input.addEventListener(
+    "keydown",
+    event => {
+
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
+
+            event.preventDefault();
+
+            handleSend();
+        }
+    }
+);
+
+
+DOM.input.addEventListener(
+    "input",
+    autogrow
+);
+
+
+DOM.panelToggle.addEventListener(
+    "click",
+    togglePanel
+);
+
+
+DOM.close.addEventListener(
+    "click",
+    () => window.close()
+);
+
+
+DOM.clear.addEventListener(
+    "click",
+    startNewChat
+);
+
+
+/* ============================================================
+   20. START
+   ============================================================ */
+
+boot();
+
+</script>
+
+</body>
+</html>

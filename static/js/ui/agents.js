@@ -79,6 +79,14 @@ function buildCard(agent, onSelect) {
         if (typeof onSelect === "function") {
             onSelect(agent);
         }
+        // Also open the standalone chat page (static/chat.html) in a new tab.
+        // The in-app corner widget still works on top of this, and this new
+        // page keeps its own per-agent session in this browser tab.
+        window.open(
+            `/static/chat.html?agent=${encodeURIComponent(agent.id)}`,
+            "ai-chat",
+            "width=800,height=640,resizable=yes,scrollbars=yes"
+        );
     });
     card.appendChild(start);
 
