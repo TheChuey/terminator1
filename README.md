@@ -78,17 +78,47 @@ short_circuit_1/
 
 ```
 Browser
-  ↓ POST /api/chat {message, model, agent_id, history}
+  ↓ POST /api/chat {message, model, agent_id, history, session_id, title, new_chat}
 server.py
-  ↓ build_agent(agent_id)                    app/agents/factory.py
-loader: agent.md + agent.json                app/agents/loader.py
-tools:  IDs -> functions                     app/tools/registry.py
+  ↓ chat_store.ensure_session()           app/chat_store/store.py  (ONE active chat)
+  ↓ build_agent(agent_id)                 app/agents/factory.py
+loader: agent.md + agent.json             app/agents/loader.py
+tools:  IDs -> functions                  app/tools/registry.py
 prompt: sections + tool docs -> system msg   app/core/prompt.py
   ↓
-Agent.think()                                app/core/agent.py
-  ↓ ask_llm()                                app/core/llm.py
+Agent.think()                             app/core/agent.py
+  ↓ ask_llm()                             app/core/llm.py
 Ollama
+  ↓
+server.py appends the turn to the active chat and returns {reply, session_id, title}
+  ↓ (on "Save chat" / new chat)
+chat_store.finalize_session() writes data/chatlog/agent-text-records/<title>[-v].txt
++ logs it in data/chatlog/chatRecord.jsonl
 ```
+
+## Chats: one server-side session at a time
+
+The server tracks exactly ONE active chat session (it has its own start,
+middle and end):
+
+- First message of a chat (or `new_chat: true`) finalizes any previous chat and
+  starts a new one; the server owns the conversation, so a page refresh never
+  loses it.
+- `data/chatlog/.active-chat.json` holds the live session (updates after every
+  turn).
+- Ending a chat (`POST /api/chats/end`, the "Save chat" button, or starting a
+  new chat) writes ONE transcript per chat to
+  `data/chatlog/agent-text-records/<title>.txt` — and on a name collision the
+  NEXT version (`<title>-2.txt`, ...). Re-saving a chat you kept typing in
+  produces the next version; old versions stay on disk.
+- `data/chatlog/chatRecord.jsonl` is the LOG of those transcripts (title, agent,
+  model, version, message/interaction counts, timestamps) used by the
+  frontend drop-down — one line per chat VERSION; the drop-down shows the
+  newest version of each chat. Existing `.txt` files are imported into the log
+  once at startup.
+
+Version helpers: `python scripts/version_chats.py list | import | bump
+<id-or-title> [version] | versioning on|off`.
 
 Agent modes:
 
@@ -101,7 +131,12 @@ Agent modes:
 |---|---|
 | `GET /api/models` | Model dropdown options (scanned from Ollama at startup) |
 | `GET /api/agents` | All discovered agents: `{id, name, description, mode}` |
-| `POST /api/chat` | `{message, model, agent_id, history}` → `{reply}` |
+| `POST /api/chat` | `{message, model, agent_id, history, session_id?, title?, new_chat?}` → `{reply, session_id, title}` |
+| `GET /api/chats` | Chat log + the active chat (feeds the chats drop-down) |
+| `GET /api/chats/{id}` | One chat: log row + `.txt` content + parsed messages |
+| `POST /api/chats/end` | Finalize the active chat into a versioned `.txt` + log it |
+| `POST /api/chat-save` | Finalize the active chat (kept for legacy clients) |
+| `GET/POST/DELETE /api/discussions` | The same chat log (chatRecord.jsonl records) |
 
 ## Creating a new agent
 
@@ -123,7 +158,9 @@ Full field reference, tool catalog, copy-paste example, and troubleshooting:
 
 ## Notes
 
-- Chat requests are stateless server-side: the frontend owns history and
-  replays it on every send.
+- The backend tracks one active chat session at a time (see "Chats" above);
+  `history` is still accepted for backwards compatibility.
 - `/api/chat` is intentionally a sync endpoint so blocking LLM calls run in
   FastAPI's threadpool instead of stalling the event loop.
+- Chat transcripts live in `data/chatlog/agent-text-records/` as `.txt` files;
+  `data/chatlog/chatRecord.jsonl` is the header log that points at them.

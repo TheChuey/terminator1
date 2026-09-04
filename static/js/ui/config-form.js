@@ -38,7 +38,7 @@ export function buildConfigForm({ agents = [], models = [], settings = {} }) {
     const pathInput = document.createElement("input");
     pathInput.type = "text";
     pathInput.id = "chat-save-path";
-    pathInput.placeholder = "e.g. data/chats or absolute folder";
+    pathInput.placeholder = "e.g. data/chatlog/agent-text-records or absolute folder";
     pathInput.value = settings.chatSavePath || "";
     pathField.appendChild(pathLabel);
     pathField.appendChild(pathInput);
@@ -49,6 +49,28 @@ export function buildConfigForm({ agents = [], models = [], settings = {} }) {
     pathNote.textContent = "Where saved chat transcripts (.txt files) are written on the server.";
     root.appendChild(pathNote);
 
+    // ---- Chat versioning toggle ----
+    const versionField = document.createElement("label");
+    versionField.className = "field field-toggle";
+    const versionLabel = document.createElement("span");
+    versionLabel.textContent = "Disable chat versioning";
+    const versionToggle = document.createElement("input");
+    versionToggle.type = "checkbox";
+    versionToggle.id = "disable-versioning";
+    versionToggle.checked = Boolean(settings.disableVersioning);
+    const versionSwitch = document.createElement("span");
+    versionSwitch.className = "field-switch";
+    versionField.appendChild(versionLabel);
+    versionField.appendChild(versionToggle);
+    versionField.appendChild(versionSwitch);
+    root.appendChild(versionField);
+
+    const versionNote = document.createElement("p");
+    versionNote.className = "config-note";
+    versionNote.textContent =
+        "On: re-saving a chat overwrites <title>.txt. Off (default): re-saving writes the next version (<title>-2.txt, ...).";
+    root.appendChild(versionNote);
+
     return {
         root,
         values() {
@@ -56,6 +78,7 @@ export function buildConfigForm({ agents = [], models = [], settings = {} }) {
                 defaultAgentId: byId("default-agent-select").value,
                 defaultModel: byId("default-model-select").value,
                 chatSavePath: byId("chat-save-path").value.trim(),
+                disableVersioning: byId("disable-versioning").checked,
             };
         },
     };

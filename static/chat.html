@@ -173,6 +173,23 @@ body {
     outline-offset: 2px;
 }
 
+.sc-header-select {
+    height: 34px;
+    padding: 0 8px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: var(--radius-small);
+    background: rgba(255,255,255,.10);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sc-header-select option {
+    color: var(--color-text);
+    background: white;
+}
+
 .sc-header-btn.danger:hover {
     background: #fee2e2;
     color: var(--color-danger);
@@ -632,6 +649,24 @@ body {
     line-height: 1.45;
 }
 
+.sc-field-input {
+    width: 100%;
+    height: 34px;
+    padding: 0 9px;
+    border: 1px solid var(--color-border);
+    border-radius: 7px;
+    background: var(--color-surface-alt);
+    color: var(--color-text-soft);
+    font: inherit;
+    font-size: 12px;
+    outline: 0;
+}
+
+.sc-field-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(7,89,133,.08);
+}
+
 .sc-empty-note {
     margin: 0;
     color: var(--color-text-faint);
@@ -789,6 +824,14 @@ body {
 
     <div class="sc-header-actions">
 
+        <select
+            class="sc-header-select"
+            id="sc-chats"
+            aria-label="Saved chats"
+            title="Open a previous chat">
+            <option value="">All chats...</option>
+        </select>
+
         <button
             type="button"
             class="sc-header-btn"
@@ -916,6 +959,17 @@ const AUTO_HI_TEXT = "hi";
 const AUTO_HI_DEFAULT = true;
 
 const PANEL_SECTIONS = [
+    {
+        title: "Chat",
+        fields: [
+            {
+                type: "input",
+                name: "chatTitle",
+                label: "Chat title",
+                placeholder: "Name this chat...",
+            }
+        ]
+    },
     {
         title: "Agent Information",
         fields: [
@@ -1394,6 +1448,45 @@ function createField(field) {
 
     switch (field.type || "text") {
 
+        case "input": {
+
+            const row = el(
+                "div",
+                "sc-field"
+            );
+
+            if (field.label) {
+
+                row.appendChild(
+                    el(
+                        "span",
+                        "sc-field-label",
+                        field.label
+                    )
+                );
+            }
+
+            const input =
+                document.createElement(
+                    "input"
+                );
+
+            input.type = "text";
+            input.className = "sc-field-input";
+            input.dataset.name =
+                field.name || "";
+
+            if (field.placeholder) {
+                input.placeholder =
+                    field.placeholder;
+            }
+
+            row.appendChild(input);
+
+            return row;
+        }
+
+
         case "text": {
 
             const row = el(
@@ -1543,6 +1636,18 @@ class ChatSession {
             new Date().toISOString();
 
         this.isWaiting = false;
+        this.sessionId = null;
+    }
+
+
+    setSessionId(sessionId, title) {
+
+        this.sessionId =
+            sessionId || null;
+
+        if (title) {
+            this.title = title;
+        }
     }
 
 
@@ -1682,6 +1787,7 @@ class ChatSession {
             new Date().toISOString();
 
         this.isWaiting = false;
+        this.sessionId = null;
     }
 }
 
@@ -1762,6 +1868,11 @@ const DOM = {
     avatar:
         document.getElementById(
             "sc-avatar"
+        ),
+
+    chats:
+        document.getElementById(
+            "sc-chats"
         )
 };
 
@@ -2060,7 +2171,10 @@ async function sendChat({
     message,
     agentId = "",
     model = "",
-    history = []
+    history = [],
+    sessionId = "",
+    title = "",
+    newChat = false
 }) {
 
     const response =
@@ -2078,7 +2192,10 @@ async function sendChat({
                     message,
                     model,
                     agent_id: agentId,
-                    history
+                    history,
+                    session_id: sessionId,
+                    title,
+                    new_chat: newChat
                 })
             }
         );
@@ -2093,85 +2210,95 @@ async function sendChat({
     const data =
         await response.json();
 
-    return data.reply;
+    return {
+        reply: data.reply,
+        session_id: data.session_id,
+        title: data.title
+    };
 }
 
 
 /* ============================================================
-   12. SAVE CHAT
+   12. SAVED CHATS (log + drop-down)
    ============================================================ */
 
-async function autoSave(session) {
+async function loadChatsDropdown() {
 
-    if (
-        !session ||
-        session.isEmpty
-    ) {
+    try {
+
+        const response =
+            await fetch("/api/chats");
+
+        if (!response.ok) {
+            return [];
+        }
+
+        return (await response.json()).chats || [];
+
+    } catch (_) {
+        return [];
+    }
+}
+
+
+async function openChat(id) {
+
+    if (!id) {
         return;
     }
-
-    const path =
-        settings.chatSavePath ||
-        "data/chats";
 
     try {
 
         const response =
             await fetch(
-                "/api/chat-save",
-                {
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body: JSON.stringify({
-
-                        path,
-
-                        fileName:
-                            session.transcriptFileName,
-
-                        title:
-                            session.title,
-
-                        agentName:
-                            session.agentName,
-
-                        model:
-                            session.model,
-
-                        content:
-                            session.transcript
-                    })
-                }
+                `/api/chats/${encodeURIComponent(id)}`
             );
 
-        const result =
+        if (!response.ok) {
+            return;
+        }
+
+        const chat =
             await response.json();
 
-        if (
-            !response.ok ||
-            !result.saved
-        ) {
+        clearMessages();
 
-            throw new Error(
-                result.error ||
-                "Save failed."
+        (chat.messages || []).forEach(message => {
+
+            addBubble(
+                message.role === "user"
+                    ? "user"
+                    : "agent",
+                message.text || message.content || "",
+                message.author || (
+                    message.role === "user"
+                        ? "You"
+                        : activeAgent?.name
+                )
             );
+        });
+
+        if (activeSession) {
+            activeSession.messages = [];
+            activeSession.title =
+                chat.title || "New chat";
+            activeSession.startedAt =
+                chat.startedAt ||
+                new Date().toISOString();
+
+            // Viewing an old chat is read-only; the next message you send
+            // starts a brand-new server-side session (one at a time).
+            activeSession.sessionId = null;
         }
 
         setSaveStatus(
-            `Saved: ${result.file}`,
+            `Opened: ${chat.title || chat.fileName} (read-only)`,
             "ok"
         );
 
-    } catch (error) {
-
+    } catch (_) {
         setSaveStatus(
-            `Save failed: ${error.message}`,
+            "Could not open that chat.",
             "error"
         );
     }
@@ -2211,7 +2338,14 @@ async function handleSend() {
 
     try {
 
-        const reply =
+        const values = getPanelValues();
+
+        const userTitle =
+            String(
+                values.chatTitle || ""
+            ).trim();
+
+        const result =
             await sendChat({
 
                 message: text,
@@ -2223,34 +2357,37 @@ async function handleSend() {
                     activeSession.model,
 
                 history:
-                    activeSession.getApiHistory()
+                    activeSession.getApiHistory(),
+
+                sessionId:
+                    activeSession.sessionId || "",
+
+                title: userTitle,
+
+                newChat:
+                    !activeSession.sessionId
             });
 
+        activeSession.setSessionId(
+            result.session_id,
+            result.title
+        );
+
         activeSession.addAssistantMessage(
-            reply,
+            result.reply,
             activeAgent.name
         );
 
         addBubble(
             "agent",
-            reply,
+            result.reply,
             activeAgent.name
         );
 
-        await autoSave(
-            activeSession
+        setSaveStatus(
+            "Chat tracked on the server.",
+            "ok"
         );
-
-        if (
-            !DOM.saveStatus.classList.contains(
-                "error"
-            )
-        ) {
-            setSaveStatus(
-                "Chat saved.",
-                "ok"
-            );
-        }
 
     } catch (error) {
 
@@ -2336,11 +2473,13 @@ function getPanelValues() {
 }
 
 
-/* Start the current agent completely fresh: wipe its session data
-   and the rendered bubbles, then prepare the input for the next
-   message. This is the single source of truth used by the header
+/* Start the current agent completely fresh: finalize the active chat on the
+   server, wipe the session data + rendered bubbles, and prepare the input for
+   the next message. This is the single source of truth used by the header
    "New Chat" button and the side panel "Clear Chat" action. */
-function startNewChat() {
+async function startNewChat() {
+
+    await finalizeActiveChat({ quiet: true });
 
     if (activeSession) {
         activeSession.newChat();
@@ -2348,19 +2487,70 @@ function startNewChat() {
 
     clearMessages();
 
+    await refreshChatsDropdown();
+
     setSaveStatus(
-        "Chat cleared.",
+        "New chat. Name it in the panel, then send your message.",
         "ok"
     );
 
     DOM.input.focus();
 }
 
+/* ============================================================
+   15. SAVED CHATS - DROP-DOWN
+   ============================================================ */
+
+async function refreshChatsDropdown() {
+
+    const chats =
+        await loadChatsDropdown();
+
+    DOM.chats.replaceChildren();
+
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All chats...";
+    DOM.chats.appendChild(all);
+
+    chats.forEach(chat => {
+
+        const option =
+            document.createElement("option");
+
+        option.value = chat.id;
+
+        const tag =
+            chat.status === "active"
+                ? " (active)"
+                : chat.version
+                    ? ` (v${chat.version})`
+                    : "";
+
+        option.textContent =
+            `${chat.title || chat.fileName}${tag}`;
+
+        DOM.chats.appendChild(option);
+    });
+}
+
+
+function handleChatsSelect() {
+
+    const id = DOM.chats.value;
+    DOM.chats.value = "";
+
+    if (id) {
+        openChat(id);
+    }
+}
+
 
 /* Experimental auto-"hi" feature (may be removed later, kept isolated).
    When the panel's autoHi checkbox is enabled and the current agent has
-   no messages yet (a fresh chat), inject "hi" into the input and press
-   Send automatically so the conversation starts itself. */
+   no messages yet (a fresh chat), type "hi" into the input so the chat
+   starts itself after you've named it - it does NOT auto-send, so you
+   get a chance to add a title first. */
 function maybeAutoHi() {
 
     if (
@@ -2379,34 +2569,115 @@ function maybeAutoHi() {
 
     DOM.input.value = AUTO_HI_TEXT;
     autogrow();
+}
 
-    handleSend();
+
+/* Finalize the active chat on the server (writes the versioned .txt + log).
+   If no subject was set in the panel, prompt for one so the chat gets a
+   meaningful name (works for every agent; prompts on Save, Clear AND any
+   new-chat). */
+async function finalizeActiveChat({ quiet = false } = {}) {
+
+    if (
+        !activeSession ||
+        !activeSession.sessionId
+    ) {
+
+        if (!quiet) {
+            setSaveStatus(
+                "No active chat to save yet.",
+                "error"
+            );
+        }
+
+        return null;
+    }
+
+    let title =
+        String(
+            getPanelValues().chatTitle || ""
+        ).trim();
+
+    if (!title) {
+
+        const subject = window.prompt(
+            "Name this chat:",
+            activeSession.title !== "New chat"
+                ? activeSession.title
+                : ""
+        );
+
+        if (subject !== null && subject.trim()) {
+            title = subject.trim();
+        }
+    }
+
+    if (title) {
+        activeSession.title = title;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/chats/end",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({ title })
+                }
+            );
+
+        const result =
+            await response.json();
+
+        if (
+            !response.ok ||
+            !result.saved
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Save failed."
+            );
+        }
+
+        if (!quiet) {
+            setSaveStatus(
+                `Saved: ${result.file} (v${result.version})`,
+                "ok"
+            );
+        }
+
+        return result;
+
+    } catch (error) {
+
+        if (!quiet) {
+            setSaveStatus(
+                `Save failed: ${error.message}`,
+                "error"
+            );
+        }
+
+        return null;
+    }
 }
 
 
 window.__scActions = {
 
     save() {
-
-        if (
-            !activeSession ||
-            activeSession.isEmpty
-        ) {
-
-            setSaveStatus(
-                "Nothing to save yet.",
-                "error"
-            );
-
-            return;
-        }
-
-        autoSave(activeSession);
+        return finalizeActiveChat();
     },
 
     clearChat() {
-
-        startNewChat();
+        return startNewChat();
     }
 };
 
@@ -2574,8 +2845,11 @@ async function boot() {
 
     switchToAgent(target);
 
-    /* Auto-"hi" on a fresh chat (if the Behavior checkbox is enabled). */
+    /* Auto-"hi" on a fresh chat (if the Behavior checkbox is enabled).
+       Now it only pre-fills "hi" - it waits for you to title + send. */
     maybeAutoHi();
+
+    await refreshChatsDropdown();
 
     DOM.input.focus();
 }
@@ -2630,6 +2904,26 @@ DOM.clear.addEventListener(
     "click",
     startNewChat
 );
+
+
+DOM.chats.addEventListener(
+    "change",
+    handleChatsSelect
+);
+
+
+/* refresh the saved-chats drop-down as the active chat grows */
+const _origSetWaiting =
+    setWaiting;
+
+setWaiting = function (waiting) {
+
+    _origSetWaiting(waiting);
+
+    if (!waiting) {
+        refreshChatsDropdown();
+    }
+};
 
 
 /* ============================================================

@@ -20,19 +20,27 @@ from pathlib import Path
 from app.core.llm import refresh_models
 from app.agents.registry import list_agents
 from app.agents.factory import build_agent, replay_history, AgentNotFoundError
+from app.chat_store import store as chat_store
+
+# Runs once at startup; scans data/chatlog/agent-text-records/*.txt and records
+# their header info in data/chatlog/chatRecord.jsonl so past chats appear in
+# the drop-down immediately.
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 MODELS_FILE = BASE_DIR / "config" / "models.json"
 SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
 
-# Frontend-owned data (written by the /api/discussions, /api/history,
-# /api/settings and /api/exports endpoints below):
+# Frontend-owned data (written by the /api/history, /api/settings and
+# /api/exports endpoints below):
 DATA_DIR = BASE_DIR / "data"
-DISCUSSIONS_FILE = DATA_DIR / "discussions.json"
 HISTORY_FILE = DATA_DIR / "history.json"
 EXPORTS_DIR = DATA_DIR / "exports"
 APP_SETTINGS_FILE = STATIC_DIR / "config" / "app_settings.json"
+
+# The chat log lives in data/chatlog/chatRecord.jsonl, owned by
+# app.chat_store (import_once / list_log / save_discussion / delete_discussion).
+# The legacy /api/discussions endpoints below are thin wrappers over it.
 
 
 def _load_json(path, default):
@@ -64,11 +72,14 @@ def _default_agent() -> str:
         return "basic_chat"
 
 
-# Startup hook: scan Ollama models BEFORE any request is served, so the
-# frontend dropdown is always in sync with what is actually installed.
+# Startup hook: scan Ollama models BEFORE any request is served, and import
+# any existing data/chatlog/agent-text-records/*.txt transcripts into the log
+# (data/chatlog/chatRecord.jsonl) so old chats show up in the frontend
+# drop-down without manual work.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     refresh_models()           # ollama -> config/models.json
+    chat_store.import_once()   # agent-text-records/*.txt -> data/chatlog/chatRecord.jsonl
     yield                      # serve requests; code after this runs on shutdown
 
 app = FastAPI(lifespan=lifespan)
@@ -85,6 +96,10 @@ class ChatRequest(BaseModel):
     model: str = ""
     agent_id: str = ""
     history: List[dict] = []  # Prior turns from the frontend: [{role, content}, ...]
+    # --- server-side chat session fields ---
+    session_id: str = ""      # "" on the first message of a new chat
+    title: str = ""           # optional user-chosen title for the chat
+    new_chat: bool = False    # start a fresh chat (finalizes the previous one)
 
 # --- UI SOURCE OF TRUTH ---
 
@@ -147,17 +162,22 @@ async def get_agents():
 def chat(data: ChatRequest):
     """Handle a chat message from the frontend.
 
-    The request payload carries {message, model, agent_id, history}. We build a
-    FRESH agent for this request (stateless - the frontend keeps its own
-    conversation history), using the selected agent and model, then return the
-    agent's reply.
+    The backend now tracks chat sessions itself (ONE active session at a
+    time). Each chat has its own start -> middle -> end:
+      - the first message ({new_chat: true}, or no active session) finalizes
+        any previous chat and starts a new one;
+      - every message appends the user turn + assistant reply to the active
+        session (persisted in data/chatlog/.active-chat.json);
+      - when a chat ends (new chat, "Save chat" or /api/chats/end), the
+        transcript is written once to data/chatlog/agent-text-records/<title>[-v].txt
+        and logged in data/chatlog/chatRecord.jsonl.
 
-    NOTE: this is a SYNC endpoint (def, not async def) on purpose. The LLM
-    call inside agent.think() is blocking (it waits 10-60s for Ollama to
-    generate). FastAPI runs sync endpoints in a THREADPOOL, so the event loop
-    stays free and two chat requests do NOT block each other. An async def
-    would run the blocking LLM call on the event loop and stall the whole
-    server for every reply.
+    The agent is still built FRESH per request and the browser may keep its
+    own copy of history, but the server is now the source of truth for the
+    conversation so a refresh never loses it.
+
+    This stays a SYNC endpoint on purpose: the blocking LLM call runs in
+    FastAPI's threadpool, so the event loop stays free.
     """
     agent_id = data.agent_id or _default_agent()
     print(f"[SERVER] Message for '{agent_id}': {data.message}")
@@ -169,21 +189,60 @@ def chat(data: ChatRequest):
         print(f"[SERVER] {exc}")
         return {"reply": f"(unknown agent '{agent_id}' - is the folder present in agent_library/?)"}
 
-    # Replay the frontend's history so the whole conversation reaches the LLM.
-    replay_history(agent, data.history)
+    # One session at a time: start one when asked, otherwise continue it.
+    session = chat_store.ensure_session(
+        agent, session_id=data.session_id, title=data.title, new_chat=data.new_chat
+    )
+
+    # Seed the fresh agent with the server's copy of the conversation so the
+    # LLM always sees the full chat (browser history is ignored when a session
+    # already exists server-side).
+    for turn in session.get("messages", []):
+        agent.messages.append({"role": turn.get("role"), "content": turn.get("content", "")})
 
     reply = agent.think(data.message)
+    session = chat_store.append_turn(data.message, reply) or session
     print(f"[SERVER] Reply via {agent.model}: {reply[:120]}...")
 
-    return {"reply": reply}
+    return {"reply": reply, "session_id": session["id"], "title": session.get("title", "")}
 
 
-# --- DISCUSSIONS (data/discussions.json) ---
+# --- CHAT SESSIONS (server-side organization) ---
+
+@app.get("/api/chats")
+async def list_chats():
+    """The chat log (data/chatlog/chatRecord.jsonl): header rows for every
+    transcript + the currently active session. Feeds the frontend chats
+    drop-down."""
+    return {"chats": chat_store.list_log()}
+
+
+@app.get("/api/chats/{chat_id}")
+async def get_chat(chat_id: str):
+    """One chat: its log row + the .txt content + parsed messages."""
+    chat = chat_store.get_chat(chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail=f"Chat '{chat_id}' not found")
+    return chat
+
+
+@app.post("/api/chats/end")
+async def end_chat(payload: dict = None):
+    """Finalize the active chat: writes its .txt (versioned on name collision)
+    and adds a header row to the log. Safe to call repeatedly."""
+    payload = payload or {}
+    row = chat_store.finalize_session(title=payload.get("title") or payload.get("chatTitle"))
+    if not row:
+        return {"finalized": False, "saved": False, "error": "No active chat to finalize."}
+    return {"finalized": True, "saved": True, "file": row["fileName"], "id": row["id"], "version": row["version"]}
+
+
+# --- DISCUSSIONS (data/chatlog/chatRecord.jsonl - the chat log) ---
 
 @app.get("/api/discussions")
 async def list_discussions():
-    """Every stored discussion; callers decide how to sort them."""
-    return {"discussions": _load_json(DISCUSSIONS_FILE, [])}
+    """Every stored chat header row, newest first (the log)."""
+    return {"discussions": chat_store.list_log()}
 
 
 @app.post("/api/discussions")
@@ -191,39 +250,25 @@ async def save_discussion(discussion: dict):
     """Create or update one discussion (upsert by its `id`).
 
     The server stamps `updatedAt` itself - the frontend never has to.
+    Delegated to chat_store, which writes data/chatlog/chatRecord.jsonl.
     """
     discussion_id = discussion.get("id")
     if not discussion_id:
         return {"saved": False, "error": "A discussion needs an 'id' to be saved."}
 
-    discussions = _load_json(DISCUSSIONS_FILE, [])
     discussion["updatedAt"] = datetime.now().isoformat(timespec="seconds")
-
-    replaced = False
-    for index, existing in enumerate(discussions):
-        if existing.get("id") == discussion_id:
-            discussions[index] = discussion
-            replaced = True
-            break
-
-    if not replaced:
-        discussions.append(discussion)
-
-    _save_json(DISCUSSIONS_FILE, discussions)
-    print(f"[DISCUSSIONS] saved '{discussion_id}' ({'updated' if replaced else 'new'})")
-    return {"saved": True}
+    saved = chat_store.save_discussion(discussion)
+    if saved:
+        print(f"[DISCUSSIONS] saved '{discussion_id}'")
+    return {"saved": saved}
 
 
 @app.delete("/api/discussions/{discussion_id}")
 async def delete_discussion(discussion_id: str):
     """Permanently remove one discussion by id (404 when unknown)."""
-    discussions = _load_json(DISCUSSIONS_FILE, [])
-    remaining = [d for d in discussions if d.get("id") != discussion_id]
-
-    if len(remaining) == len(discussions):
+    deleted = chat_store.delete_discussion(discussion_id)
+    if not deleted:
         raise HTTPException(status_code=404, detail=f"Discussion '{discussion_id}' not found")
-
-    _save_json(DISCUSSIONS_FILE, remaining)
     print(f"[DISCUSSIONS] deleted '{discussion_id}'")
     return {"deleted": True, "id": discussion_id}
 
@@ -303,7 +348,7 @@ def _sanitize_file_name(raw: str) -> str:
 def _resolve_chat_dir(raw_path: str) -> Path:
     """Resolve the configured output folder, always anchored inside BASE_DIR.
 
-    - Empty path -> BASE_DIR / "data" / "chats"
+    - Empty path -> BASE_DIR / "data" / "chatlog" / "agent-text-records"
     - Relative path -> BASE_DIR / <path>
     - Absolute path -> kept only if it stays inside BASE_DIR; otherwise
       an absolute path is re-rooted under BASE_DIR (so a crafted value
@@ -320,23 +365,30 @@ def _resolve_chat_dir(raw_path: str) -> Path:
     try:
         resolved.relative_to(BASE_DIR.resolve())
     except ValueError:
-        resolved = (BASE_DIR / "data" / "chats").resolve()
+        resolved = (BASE_DIR / "data" / "chatlog" / "agent-text-records").resolve()
 
     return resolved
 
 
 @app.post("/api/chat-save")
 async def save_chat_session(payload: dict):
-    """Write one chat session to a nicely-formatted .txt file.
+    """Finalize the ACTIVE chat: name the .txt from the chat title, bump the
+    version on a name collision (unless disableVersioning is on), and log it.
 
-    body: { path, fileName, title, agentName, model, content }
-    The server sanitizes the file name + path so a crafted request can
-    never write outside the project; it also forces a .txt extension.
+    The transcript is built server-side from the active session, so the
+    frontend no longer sends raw 'content' per reply. If no active session
+    exists, it falls back to writing the legacy payload the old way.
     """
+    row = chat_store.finalize_session(title=payload.get("title"))
+    if row:
+        print(f"[CHAT-SAVE] finalized '{row['title']}' -> {row['fileName']} (v{row['version']})")
+        return {"saved": True, "file": str(chat_store.RECORDS_DIR / row["fileName"]), "id": row["id"]}
+
     content = payload.get("content")
     if content is None:
-        return {"saved": False, "error": "A chat save needs 'content'."}
+        return {"saved": False, "error": "No active chat to finalize, and no 'content' supplied."}
 
+    # Legacy fallback: write the raw blob (used by older clients).
     raw_name = str(payload.get("fileName") or "").strip() or "chat"
     safe_name = _sanitize_file_name(raw_name)
     if not safe_name.lower().endswith(".txt"):

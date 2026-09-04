@@ -2,5 +2,6 @@
   "defaultAgentId": "basic_chat_agent",
   "defaultModel": "gemma4:e2b",
   "activeDiscussionId": "disc-mthko2ytzf9exz",
-  "chatSavePath": "E:\\saved from app"
+  "chatSavePath": "E:\\saved from app",
+  "disableVersioning": false
 }

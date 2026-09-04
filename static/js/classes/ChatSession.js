@@ -36,6 +36,15 @@ export class ChatSession {
         this.messages = [];           // ordered list of message objects
         this.startedAt = new Date().toISOString();
         this.isWaiting = false;       // true while an LLM reply is pending
+        this.sessionId = null;        // server-side session id (null = not started yet)
+    }
+
+    /** Bind the chat to a server-tracked session and remember its title. */
+    setSessionId(sessionId, title) {
+        this.sessionId = sessionId || null;
+        if (title) {
+            this.title = title;
+        }
     }
 
     /** Empty when no messages yet. */
@@ -103,6 +112,7 @@ export class ChatSession {
         this.title = "New chat";
         this.startedAt = new Date().toISOString();
         this.isWaiting = false;
+        this.sessionId = null;
     }
 
     /* ---- private ---- */

@@ -150,8 +150,11 @@ function selectSession(agent, autoHi = false) {
     activeAgentId = agent.id;
 
     if (created && autoHi && widget && widget.isOpen && widget.getPanelValues().autoHi === true) {
+        // Prefill "hi" so the chat starts itself after you've named it (the
+        // "Chat title" field in the panel). No auto-send: you get a chance
+        // to title the chat first.
         widget.setInputValue(AUTO_HI_TEXT);
-        widget.send();
+        widget._input?.focus();
     }
     return created;
 }
@@ -176,6 +179,18 @@ function buildAgentConfig(agent) {
                 fields: [
                     { type: "text", label: "Status", value: "Ready" },
                     { type: "text", label: "Category", value: agent.mode || "General" },
+                ],
+            },
+            {
+                title: "Chat",
+                fields: [
+                    {
+                        type: "input",
+                        name: "chatTitle",
+                        label: "Chat title",
+                        placeholder: "Name this chat...",
+                        value: "",
+                    },
                 ],
             },
             {
@@ -206,17 +221,26 @@ async function handleSend(session, chat, text) {
     chat.setWaiting(true);
 
     try {
-        const reply = await api.sendChat({
+        const panelValues = widget.getPanelValues();
+        const userTitle = String(panelValues.chatTitle || "").trim();
+
+        const result = await api.sendChat({
             message: text,
             agentId: session.agentId,
             model: session.model,
             history: session.getApiHistory(),
+            sessionId: session.sessionId || "",
+            title: userTitle,
+            newChat: !session.sessionId,
         });
 
-        session.addAssistantMessage(reply);
-        chat.addAssistantMessage(reply, session.agentName);
-        await autoSave(session, chat);
-        chat.setSaveStatus("Chat saved.", "ok");
+        session.addAssistantMessage(result.reply);
+        chat.addAssistantMessage(result.reply, session.agentName);
+        session.setSessionId(result.session_id, result.title);
+        chat.setSaveStatus(
+            session.sessionId ? "Chat tracked on the server." : "Chat saved.",
+            "ok"
+        );
     } catch (error) {
         chat.addSystemMessage(`Sorry - that failed. ${error.message}`);
         chat.setSaveStatus(`Send failed: ${error.message}`, "error");
@@ -227,51 +251,41 @@ async function handleSend(session, chat, text) {
 
 // ---- save handlers ----
 /**
- * Auto-save after every assistant reply: keeps the .txt file as the
- * source of truth for the chat (chatSavePath from settings).
+ * "Save chat" action: finalize the active chat on the server. The server
+ * writes the transcript to data/chatlog/agent-text-records/<title>[-v].txt and
+ * logs it. If you keep chatting after saving, the next save writes the next
+ * version.
+ *
+ * If no subject was set in the panel, prompt for one so every chat ends up
+ * meaningfully named (works the same for every agent).
  */
-async function autoSave(session, chat) {
-    if (!session || session.isEmpty || !chat) {
-        return;
-    }
-
-    const path = settings.chatSavePath || "data/chats";
-
-    try {
-        const result = await api.saveChatSession({
-            path,
-            fileName: session.transcriptFileName,
-            title: session.title,
-            agentName: session.agentName,
-            model: session.model,
-            content: session.transcript,
-        });
-        chat.setSaveStatus(`Saved: ${result.file}`, "ok");
-    } catch (error) {
-        console.warn("[app] auto-save failed:", error);
-        chat.setSaveStatus(`Save failed: ${error.message}`, "error");
-    }
-}
-
-/** "Save chat" action button in the window's right panel. */
 async function handleSaveAction(session, chat) {
-    if (!session || session.isEmpty) {
-        chat.setSaveStatus("Nothing to save yet.", "error");
+    if (!session || !session.sessionId) {
+        chat.setSaveStatus("No active chat to save yet.", "error");
         return;
     }
 
-    const path = settings.chatSavePath || "data/chats";
-
     try {
-        const result = await api.saveChatSession({
-            path,
-            fileName: session.transcriptFileName,
-            title: session.title,
-            agentName: session.agentName,
-            model: session.model,
-            content: session.transcript,
-        });
-        chat.setSaveStatus(`Saved: ${result.file}`, "ok");
+        const panelValues = widget.getPanelValues();
+        let title = String(panelValues.chatTitle || "").trim();
+
+        if (!title) {
+            const subject = window.prompt(
+                "Name this chat:",
+                session.title !== "New chat" ? session.title : ""
+            );
+            if (subject !== null && subject.trim()) {
+                title = subject.trim();
+            }
+        }
+
+        const result = await api.endChat({ title });
+        chat.setSaveStatus(
+            result.saved
+                ? `Saved: ${result.file} (v${result.version})`
+                : `Save failed: ${result.error || "no active chat"}`,
+            result.saved ? "ok" : "error"
+        );
     } catch (error) {
         chat.setSaveStatus(`Save failed: ${error.message}`, "error");
     }

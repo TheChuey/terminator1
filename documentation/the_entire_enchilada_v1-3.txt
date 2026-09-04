@@ -1,0 +1,1917 @@
+=================================================================
+ the_entire_enchilada_v1-3.txt
+ UPDATES SINCE: the_entire_enchilada_v1-2.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1.2)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_enchilada_v1-2.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the exact
+deltas, and any new code that was added. Files that did NOT change are
+listed at the end so it is clear nothing was missed.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+Chats are no longer stateless. In V1.2 everything lived in the browser
+and the backend just replied to each POST /api/chat. Now the backend
+tracks ONE active chat session at a time, persists the conversation as
+versioned `.txt` transcripts, and keeps a single metadata store
+(`data/chatlog/chatRecord.jsonl`) that both the main app and the
+standalone `/static/chat.html` page use to list saved chats.
+
+The changes fall into three layers:
+
+  1. NEW backend module `app/chat_store/` (two files):
+       - `logger.py`  - a small append-only JSONL "ChatLogger" that
+         stores one record per chat VERSION.
+       - `store.py`   - session lifecycle (ensure/append/finalize),
+         transcript writing with versioning, JSONL reads for the
+         drop-down, the one-time boot migration, and the slice of
+         legacy /api/discussions behavior that survived.
+     The chat-level logic (version bumping, the disableVersioning
+     toggle) moved OUT of the frontend into the server.
+
+  2. `server.py` now owns conversations end-to-end:
+       - POST /api/chat accepts `session_id`, `title` and `new_chat`
+         and returns `{reply, session_id, title}`.
+       - New endpoints /api/chats, /api/chats/{id} and /api/chats/end.
+       - /api/chat-save finalizes the ACTIVE session instead of
+         writing the browser blob; legacy payloads still work.
+       - /api/discussions GET/POST/DELETE are thin wrappers over
+         chat_store now (they used to read/write data/discussions.json).
+       - At startup, `chat_store.import_once()` migrates the old data
+         layout (data/chats/*.txt + data/discussions.json) into
+         data/chatlog/ once and then deletes the old files.
+
+  3. BOTH frontends were wired to the new endpoints:
+       - index.html app (app.js / api.js / ChatSession.js): every send
+         passes the server `session_id`; "Save chat" calls
+         /api/chats/end; a "Chat title" field was added to the corner
+         widget; the experimental auto-"hi" now pre-fills instead of
+         auto-sending.
+       - standalone static/chat.html: gained a "Saved chats"
+         drop-down (`All chats...`) fed by /api/chats, the same Chat
+         title field, server session tracking, and a single
+         `finalizeActiveChat()` used by Save, Clear and New Chat.
+
+Data layout after the migration (see the new app/chat_store section):
+       data/chatlog/chatRecord.jsonl            one record per chat VERSION
+       data/chatlog/.active-chat.json           the live session (if any)
+       data/chatlog/agent-text-records/*.txt    finalized chat transcripts
+
+The old files `data/discussions.json` and `data/chats/*.txt` (25 files)
+were consolidated/deleted as part of this round - see section "DELETED
+DATA FILES" below.
+
+=================================================================
+ 2. FILE: app/chat_store/logger.py            (NEW FILE)
+=================================================================
+NEW FILE (~299 lines). The passive metadata logger behind chatRecord.jsonl.
+It never starts chats, calls LLMs or decides versions - it only stores
+the metadata handed to it by app.chat_store.store. Full source:
+
+    """
+    app/chat_store/logger.py
+    ========================
+
+    The single metadata logger for chats and chat versions
+    (data/chatlog/chatRecord.jsonl).
+
+    Records every finalized chat / chat version as ONE JSON line. The file is
+    JSONL so each line is a self-contained searchable record:
+
+        {"id":"chr-1a2b3c4d5e6f","title":"My Research Chat","version":"2",
+         "fileName":"my-research-chat-2.txt","status":"completed", ...}
+
+    One record per VERSION is kept (append-only). The "one row per chat" view
+    the frontend needs is derived at read time by app.chat_store.store.list_log()
+    (grouping by chat id and keeping the latest record).
+
+    The logger is a passive recorder: it never starts chats, calls LLMs, runs
+    agents, or decides versions. It only stores the metadata handed to it by
+    app.chat_store.store. Versioning logic stays in store.py.
+
+    Future-proofing: records are stable dicts iterated with iter_records(),
+    so the same metadata can later be pushed into SQLite or indexed with
+    Chroma without redesigning this module.
+    """
+
+    import json
+    import threading
+    from pathlib import Path
+
+    # Default home of the JSONL index, next to the existing chat files:
+    #   data/chatlog/chatRecord.jsonl, .active-chat.json, agent-text-records/
+    DEFAULT_LOG_FILE = (
+        Path(__file__).resolve().parents[2] / "data" / "chatlog" / "chatRecord.jsonl"
+    )
+
+    # Key order used when writing every record, so the JSONL always looks alike.
+    RECORD_KEYS = [
+        "id",
+        "title",
+        "version",
+        "fileName",
+        "status",
+        "messageCount",
+        "interactionCount",
+        "startedAt",
+        "endedAt",
+        "model",
+        "agent",
+        "agentId",
+        "agentName",
+        "tags",
+    ]
+
+    HEADER_SEPARATOR = "-" * 40
+
+
+    class ChatLogger:
+        """Append-only JSONL index of chat + version metadata.
+
+        Simple on purpose: a future SQLite or Chroma layer can just read the
+        records returned here without changing who writes them.
+        """
+
+        def __init__(self, log_file=DEFAULT_LOG_FILE):
+            self.log_file = Path(log_file)
+            self._lock = threading.Lock()
+
+        # ------------------------------------------------------------------
+        # Low-level file helpers
+        # ------------------------------------------------------------------
+
+        def _read_all(self):
+            """Every record currently in the file ([] when missing/corrupt)."""
+            if not self.log_file.exists():
+                return []
+            records = []
+            for line in self.log_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # A damaged line must never break the app - skip it.
+                    continue
+            return records
+
+        def _write_all(self, records):
+            """Rewrite the whole file. Called under self._lock only."""
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_file.open("w", encoding="utf-8") as handle:
+                for record in records:
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        def _ordered(self, record):
+            """Sort the record into RECORD_KEYS order (unknown keys go last)."""
+            ordered = {}
+            for key in RECORD_KEYS:
+                if key in record:
+                    ordered[key] = record[key]
+            for key, value in record.items():
+                if key not in ordered:
+                    ordered[key] = value
+            return ordered
+
+        # ------------------------------------------------------------------
+        # Public API
+        # ------------------------------------------------------------------
+
+        def add(self, chat_data):
+            """Append one record. Call once per finalized chat / new version.
+
+            Returns the record actually written.
+            """
+            with self._lock:
+                records = self._read_all()
+                record = self._ordered(dict(chat_data))
+                records.append(record)
+                self._write_all(records)
+            return record
+
+        def update(self, chat_id, data):
+            """Replace the most recently logged record for chat_id; append when none.
+
+            Used for small corrections (e.g. new tags) - a new chat version
+            should call add() instead so the version history is kept.
+            """
+            with self._lock:
+                records = self._read_all()
+                for index in range(len(records) - 1, -1, -1):
+                    if records[index].get("id") == chat_id:
+                        records[index] = self._ordered({**records[index], **data})
+                        break
+                else:
+                    records.append(self._ordered(dict(data)))
+                self._write_all(records)
+            return data
+
+        def add_missing(self, records):
+            """Append records whose (id, fileName) pair is not logged yet.
+
+            Makes startup imports idempotent: the same transcripts rescanned on
+            every boot are never duplicated. Returns the records that were added.
+            """
+            with self._lock:
+                existing = self._read_all()
+                known = {
+                    (rec.get("id"), rec.get("fileName"))
+                    for rec in existing
+                    if rec.get("fileName")
+                }
+                added = []
+                for record in records:
+                    key = (record.get("id"), record.get("fileName"))
+                    if key not in known:
+                        record = self._ordered(dict(record))
+                        existing.append(record)
+                        added.append(record)
+                        known.add(key)
+                if added:
+                    self._write_all(existing)
+            return added
+
+        def prune(self, keep):
+            """Drop records that no longer match, keeping the index in sync.
+
+            keep(record) must return True when the record should be KEPT (e.g.
+            "the transcript file still exists"). Returns how many were removed.
+            Used so chats deleted on disk stop being listed/pointed-to.
+            """
+            with self._lock:
+                records = self._read_all()
+                kept = [record for record in records if keep(record)]
+                removed = len(records) - len(kept)
+                if removed:
+                    self._write_all(kept)
+            return removed
+
+        def remove(self, chat_id):
+            """Delete EVERY record belonging to chat_id (all its versions).
+
+            Used when a chat is deleted for good. Returns how many were removed.
+            """
+            with self._lock:
+                records = self._read_all()
+                kept = [record for record in records if record.get("id") != chat_id]
+                removed = len(records) - len(kept)
+                if removed:
+                    self._write_all(kept)
+            return removed
+
+        def get(self, chat_id):
+            """The most recently logged record for chat_id (or None)."""
+            for record in reversed(self._read_all()):
+                if record.get("id") == chat_id:
+                    return record
+            return None
+
+        def list_all(self):
+            """Every record, in the order it was appended."""
+            return self._read_all()
+
+        def iter_records(self):
+            """Generator over every record (future SQLite/Chroma migration seam)."""
+            yield from self._read_all()
+
+
+    def record_from_store_row(row, **extra):
+        """Map an app.chat_store log row onto the shared metadata schema.
+
+        'agent' reuses the friendly agentName when available, 'status' is
+        normalized ('done' -> 'completed') to match the transcript header, and
+        'tags' defaults to [] - a free slot for future topic/category tagging.
+        agentName + interactionCount are kept so the original row shape can be
+        rebuilt losslessly by store.list_log()/get_chat().
+        """
+        record = {
+            "id": row.get("id"),
+            "title": row.get("title"),
+            "version": row.get("version", ""),
+            "fileName": row.get("fileName", ""),
+            "status": "completed" if row.get("status") == "done" else (row.get("status") or ""),
+            "messageCount": row.get("messageCount", 0),
+            "interactionCount": row.get("interactionCount", 0),
+            "startedAt": row.get("startedAt", ""),
+            "endedAt": row.get("endedAt", ""),
+            "model": row.get("model", ""),
+            "agent": row.get("agentName") or row.get("agentId", ""),
+            "agentId": row.get("agentId", ""),
+            "agentName": row.get("agentName", ""),
+            "tags": row.get("tags") or [],
+        }
+        record.update(extra)
+        return record
+
+
+    def render_header(meta):
+        """Build the optional transcript metadata block ('' when no chat id)."""
+        if not meta.get("id"):
+            return ""
+        pairs = [
+            ("CHAT_ID", "id"),
+            ("TITLE", "title"),
+            ("VERSION", "version"),
+            ("FILE", "fileName"),
+            ("STATUS", "status"),
+            ("MESSAGES", "messageCount"),
+            ("STARTED", "startedAt"),
+            ("ENDED", "endedAt"),
+            ("MODEL", "model"),
+            ("AGENT", "agent"),
+            ("TAGS", "tags"),
+        ]
+        lines = []
+        for label, field in pairs:
+            value = meta.get(field, "")
+            if isinstance(value, (list, tuple)):
+                value = ", ".join(str(item) for item in value)
+            lines.append(f"{label}: {value}")
+        return "\n".join(lines) + "\n" + HEADER_SEPARATOR
+
+
+    def add_header_to_transcript(content, meta):
+        """Prefix transcript text with the metadata header (optional feature).
+
+        Returns the content unchanged when there is no chat id.
+        """
+        header = render_header(meta)
+        if not header:
+            return str(content)
+        return header + "\n\n" + str(content)
+
+
+    def parse_header(text):
+        """Pull the CAPSKEY: values out of an optional metadata header.
+
+        Keys are lower-cased (CHAT_ID -> chat_id). Returns {} when absent.
+        """
+        values = {}
+        for line in str(text or "").splitlines():
+            line = line.strip()
+            if not line or line.startswith("-"):
+                continue
+            if ":" in line:
+                key, _, raw = line.partition(":")
+                if key.isupper():
+                    values[key.lower()] = raw.strip()
+        return values
+
+
+    __all__ = [
+        "ChatLogger",
+        "record_from_store_row",
+        "render_header",
+        "add_header_to_transcript",
+        "parse_header",
+        "DEFAULT_LOG_FILE",
+    ]
+
+=================================================================
+ 3. FILE: app/chat_store/store.py            (NEW FILE)
+=================================================================
+NEW FILE (~833 lines). The brain: exactly ONE active chat session,
+versioned transcripts, the chatRecord.jsonl reads for the drop-down, and
+the one-time boot migration. Full source:
+
+    """
+    app/chat_store/store.py
+    =======================
+
+    Server-side chat organization: exactly ONE active chat session at a time.
+
+    Files:
+        data/chatlog/chatRecord.jsonl            -> the LOG: one record per chat VERSION
+        data/chatlog/.active-chat.json           -> the live session currently in progress
+        data/chatlog/agent-text-records/*.txt     -> finalized per-agent chat transcripts
+
+    Lifecycle of a chat (its own start -> middle -> end):
+        start  (new chat, or the first message after a restart/finalize)
+        turn   (each /api/chat call appends the user message + assistant reply and
+                persists the session JSON; NO .txt is written per-reply)
+        end    (/api/chats/end, "Save chat", or a new chat starting) writes the
+                single transcript .txt (versioned on name collision) and adds one
+                record (per version) to chatRecord.jsonl.
+
+    The browser never owns the transcript anymore: the server tracks each chat, and
+    data/chatlog/agent-text-records/*.txt is the source of truth that the records
+    point at. The records and the live session stay directly in data/chatlog/.
+
+    On startup, import_once() also migrates the old layout (data/chats/*.txt plus
+    data/discussions.json) into data/chatlog/ so nothing is lost when upgrading.
+    """
+
+    import hashlib
+    import json
+    import re
+    import shutil
+    import threading
+    import uuid
+    from datetime import datetime
+    from pathlib import Path
+
+    from . import logger as chat_logger
+
+    BASE_DIR = Path(__file__).resolve().parents[2]
+    DATA_DIR = BASE_DIR / "data"
+    CHATS_DIR = DATA_DIR / "chatlog"
+    RECORDS_DIR = CHATS_DIR / "agent-text-records"
+    # The ONE metadata file: a JSONL log of every chat version. chatRecord.jsonl
+    # replaced the old log-chats.json (JSON array, one row per chat) - the "one
+    # row per chat" view is now derived at read time by list_log(). Old files are
+    # migrated into it by import_once() and then deleted.
+    LOG_FILE = chat_logger.DEFAULT_LOG_FILE
+    ACTIVE_SESSION_FILE = CHATS_DIR / ".active-chat.json"
+    APP_SETTINGS_FILE = BASE_DIR / "static" / "config" / "app_settings.json"
+
+    _LEGACY_CHATS_DIR = DATA_DIR / "chats"
+    _LEGACY_LOG_FILE = DATA_DIR / "discussions.json"
+    _OLD_LOGCHATS_FILE = CHATS_DIR / "log-chats.json"   # superseded by chatRecord.jsonl
+    _OLD_JSONL_FILE = CHATS_DIR / "chat_log.jsonl"      # superseded by chatRecord.jsonl
+
+    _lock = threading.Lock()
+
+    # The single JSONL logger behind every read/write of chatRecord.jsonl.
+    _metadata_logger = chat_logger.ChatLogger()
+
+    DIVIDER = "=" * 64
+    THIN = "-" * 64
+
+
+    def _resolve_transcript(file_name: str) -> Path:
+        """Where a logged transcript lives: agent-text-records first (the current
+        home of every .txt), falling back to the chatlog root for stragglers."""
+        if not file_name:
+            return Path()
+        candidate = RECORDS_DIR / file_name
+        if candidate.exists():
+            return candidate
+        return CHATS_DIR / file_name
+
+
+    # ==========================================================================
+    # LOW-LEVEL HELPERS
+    # ==========================================================================
+
+    def _now_iso() -> str:
+        return datetime.now().isoformat(timespec="seconds")
+
+
+    def _new_id(prefix: str = "chr") -> str:
+        """Random id like 'chr-1a2b3c4d5e6f'."""
+        return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+    def _stable_id(file_name: str) -> str:
+        """Deterministic id for imported files so re-importing never duplicates."""
+        return f"chr-{hashlib.sha1(file_name.encode('utf-8')).hexdigest()[:12]}"
+
+
+    def _slugify(value) -> str:
+        """Filesystem-safe name from the chat title ('My Chat! 1' -> 'my-chat-1')."""
+        s = re.sub(r"[^a-z0-9-]+", "-", str(value or "").lower().strip()).strip("-")
+        return s[:60] or "chat"
+
+
+    def _load_json(path, default):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return default
+
+
+    def _save_json(path, value) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+    def _versioning_disabled() -> bool:
+        """Read the 'disableVersioning' toggle from the app settings file."""
+        try:
+            settings = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
+            return bool(settings.get("disableVersioning"))
+        except (OSError, json.JSONDecodeError):
+            return False
+
+
+    def _header_enabled() -> bool:
+        """Read the 'metadataHeader' toggle from the app settings file.
+
+        When on, finalized transcripts get the CHAT_ID:/TITLE:/... block from
+        app.chat_store.logger prepended. Off by default so existing .txt files
+        never change unless explicitly asked for.
+        """
+        try:
+            settings = json.loads(APP_SETTINGS_FILE.read_text(encoding="utf-8"))
+            return bool(settings.get("metadataHeader"))
+        except (OSError, json.JSONDecodeError):
+            return False
+
+
+    # ==========================================================================
+    # TRANSCRIPTS
+    # ==========================================================================
+
+    def _count_interactions(messages: list) -> int:
+        """Number of user->assistant turn pairs (mirrors frontend chat-formatter)."""
+        pairs = 0
+        for i in range(1, len(messages)):
+            if (
+                messages[i].get("role") == "assistant"
+                and messages[i - 1].get("role") == "user"
+            ):
+                pairs += 1
+        if messages and messages[-1].get("role") == "user":
+            pairs += 1
+        return pairs
+
+
+    def _fmt_date(value) -> str:
+        """ISO timestamp -> 'Sep 04, 2026, 02:35 PM' (or now on parse failure)."""
+        try:
+            iso = str(value or "").replace("Z", "+00:00")
+            return datetime.fromisoformat(iso).strftime("%b %d, %Y, %I:%M %p")
+        except (ValueError, TypeError):
+            return datetime.now().strftime("%b %d, %Y, %I:%M %p")
+
+
+    def build_transcript(session: dict) -> str:
+        """Render a session dict into the .txt transcript body."""
+        messages = session.get("messages", []) or []
+        lines = [
+            DIVIDER,
+            f"Session: {session.get('title') or 'Untitled chat'}",
+            f"Agent:   {session.get('agentName') or session.get('agentId') or 'default'}",
+            f"Model:   {session.get('model') or '(server default)'}",
+            f"Date:    {_fmt_date(session.get('endedAt') or session.get('updatedAt') or session.get('startedAt'))}",
+            f"Interactions between LLM and user: {_count_interactions(messages)}",
+            DIVIDER,
+            "",
+        ]
+        for message in messages:
+            speaker = message.get("author") or ("You" if message.get("role") == "user" else "AI")
+            lines.append(f"[{speaker}]  {_fmt_date(message.get('timestamp'))}")
+            lines.append(THIN)
+            lines.append((message.get("content") or "") or "")
+            lines.append("")
+        return "\n".join(lines)
+
+
+    def _parse_transcript_messages(text) -> list:
+        """Turn transcript text back into [{role, author, text}, ...] (best effort)."""
+        messages = []
+        current = None
+        for line in str(text or "").splitlines():
+            match = re.match(r"^\[([^\]]+)\]\s*(.*)$", line)
+            if match:
+                if current and current.get("text"):
+                    messages.append(current)
+                current = {
+                    "role": "user" if match.group(1).strip() == "You" else "assistant",
+                    "author": match.group(1).strip(),
+                    "text": "",
+                }
+            elif current is not None:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("-") and not stripped.startswith("="):
+                    current["text"] = (
+                        f"{current.get('text')}\n{stripped}" if current.get("text") else stripped
+                    )
+        if current and current.get("text"):
+            messages.append(current)
+        return messages
+
+
+    def parse_transcript_header(text: str) -> dict:
+        """Pull the 'Session:/Agent:/...' header values out of a transcript.
+
+        Also understands the newer CAPS: metadata block written by
+        app.chat_store.logger (CHAT_ID:/TITLE:/AGENT:/MODEL:/MESSAGES://...),
+        so transcripts with the optional header still import cleanly.
+        """
+        lines = str(text or "").splitlines()
+        values: dict = {}
+
+        def grab(key: str, field: str):
+            for line in lines:
+                if line.startswith(key):
+                    values[field] = line[len(key):].strip()
+                    return
+
+        grab("Session:", "title")
+        grab("TITLE:", "title")
+        grab("Agent:", "agent_name")
+        grab("AGENT:", "agent_name")
+        grab("Model:", "model")
+        grab("MODEL:", "model")
+        grab("MESSAGES:", "messageCount")
+        grab("STARTED:", "startedAt")
+        grab("ENDED:", "endedAt")
+        grab("TAGS:", "tags")
+        grab("Interactions between LLM and user:", "interactions")
+        values.pop("interactions", None)  # read separately below
+        for line in lines:
+            if line.startswith("Interactions between LLM and user:"):
+                try:
+                    values["interactionCount"] = int(line.split(":")[-1].strip())
+                except ValueError:
+                    pass
+                break
+        if values.get("messageCount"):
+            try:
+                values["messageCount"] = int(values["messageCount"])
+            except (ValueError, TypeError):
+                pass
+        return values
+
+
+    # ==========================================================================
+    # ACTIVE SESSION
+    # ==========================================================================
+
+    def current_session() -> dict | None:
+        """The single in-progress session (None when none exists)."""
+        with _lock:
+            return _load_json(ACTIVE_SESSION_FILE, None)
+
+
+    def ensure_session(agent, session_id: str = "", title: str = "", new_chat: bool = False) -> dict:
+        """Return the active session, finalizing the old one when a new chat starts.
+
+        A new session is created when:
+          - the caller explicitly asks for a new chat, OR
+          - there is no active session, OR
+          - the caller's session_id does NOT match the active session (stale), OR
+          - the active session is talking to a different agent.
+
+        A session kept alive after "Save chat" (status 'finalized') is only
+        finalized again when it gained messages since its last save - otherwise
+        starting a new chat just moves on, keeping the historical .txt files.
+        """
+        with _lock:
+            active = _load_json(ACTIVE_SESSION_FILE, None)
+            wants_new = (
+                new_chat
+                or active is None
+                or (session_id and active.get("id") != session_id)
+                or active.get("agentId") != agent.profile.id
+            )
+            if wants_new:
+                if active is not None and active.get("status") == "finalized":
+                    # Re-save only when the chat grew after its last version.
+                    if len(active.get("messages", [])) > (active.get("finalizedCount") or 0):
+                        _finalize_locked()
+                elif active is not None:
+                    _finalize_locked()
+                return _create_locked(agent, title)
+            return active
+
+
+    def _create_locked(agent, title: str = "") -> dict:
+        now = _now_iso()
+        session = {
+            "id": _new_id("chr"),
+            "title": (str(title or "").strip()[:80]) or "New chat",
+            "agentId": agent.profile.id or "",
+            "agentName": agent.profile.name or "",
+            "model": agent.model or "",
+            "startedAt": now,
+            "updatedAt": now,
+            "messages": [],
+        }
+        _save_json(ACTIVE_SESSION_FILE, session)
+        print(f"[CHATS] started session '{session['id']}' for '{session['agentId']}'")
+        return session
+
+
+    def append_turn(user_text: str, reply_text: str) -> dict | None:
+        """Append the user message + assistant reply to the active session."""
+        with _lock:
+            session = _load_json(ACTIVE_SESSION_FILE, None)
+            if not session:
+                return None
+            now = _now_iso()
+            session.setdefault("messages", []).append(
+                {"role": "user", "author": "You", "content": str(user_text), "timestamp": now}
+            )
+            session.setdefault("messages", []).append(
+                {
+                    "role": "assistant",
+                    "author": session.get("agentName") or "AI",
+                    "content": str(reply_text),
+                    "timestamp": now,
+                }
+            )
+            if session.get("title") in ("", "New chat"):
+                session["title"] = _first_words(user_text, 50)
+            session["updatedAt"] = now
+            _save_json(ACTIVE_SESSION_FILE, session)
+            return session
+
+
+    def _first_words(text: str, max_chars: int) -> str:
+        text = str(text or "").strip()
+        if not text:
+            return "New chat"
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars].rstrip() + "..."
+
+
+    # ==========================================================================
+    # FINALIZE (end of a chat)
+    # ==========================================================================
+
+    def finalize_session(title: str | None = None) -> dict | None:
+        """Finalize the active chat: write its .txt (versioned) + log one header row.
+
+        The live session stays in place (marked 'finalized') so the user can keep
+        chatting; saving again writes the NEXT version to a new .txt file. The log
+        keeps ONE row per chat, pointing at its latest version - older .txt files
+        remain on disk as archived history.
+        """
+        with _lock:
+            return _finalize_locked(title=title)
+
+
+    def _finalize_locked(title: str | None = None) -> dict | None:
+        session = _load_json(ACTIVE_SESSION_FILE, None)
+        if not session:
+            return None
+
+        if title and str(title).strip():
+            session["title"] = str(title).strip()[:80]
+        elif session.get("title") in ("", "New chat"):
+            session["title"] = _first_words(
+                ((session.get("messages") or [{}])[0].get("content") if session.get("messages") else ""),
+                50,
+            )
+
+        session["endedAt"] = _now_iso()
+        session["status"] = "finalized"
+        session["finalizedCount"] = len(session.get("messages", []))
+        content = build_transcript(session)
+
+        base = _slugify(session["title"])
+        target, version = _target_path(base)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        row = {
+            "id": session.get("id") or _stable_id(target.name),
+            "title": session.get("title"),
+            "fileName": target.name,
+            "agentId": session.get("agentId", ""),
+            "agentName": session.get("agentName", ""),
+            "model": session.get("model", ""),
+            "version": str(version),
+            "messageCount": len(session.get("messages", [])),
+            "interactionCount": _count_interactions(session.get("messages", [])),
+            "startedAt": session.get("startedAt"),
+            "endedAt": session.get("endedAt"),
+            "status": "done",
+        }
+
+        if _header_enabled():
+            content = chat_logger.add_header_to_transcript(
+                content, chat_logger.record_from_store_row(row)
+            )
+        target.write_text(content, encoding="utf-8")
+
+        # Record this version in chatRecord.jsonl. A failure here must never
+        # block the chat save, so the existing behavior is preserved.
+        try:
+            _metadata_logger.add(chat_logger.record_from_store_row(row))
+        except OSError:
+            pass
+
+        # Keep the live session so continued messages can become the next version.
+        _save_json(ACTIVE_SESSION_FILE, session)
+        print(f"[CHATS] finalized '{session['title']}' -> {target.name} (v{version})")
+        return row
+
+
+    def _target_path(base: str) -> tuple:
+        """Pick the file name + version for a finalized chat (inside RECORDS_DIR).
+
+        - Remember the existing version when overwriting is disabled: bump to the
+          next integer suffix (<base>-2.txt, -3.txt, ...) so every chat keeps its
+          own end-to-end transcript.
+        - With disableVersioning on, always overwrite <base>.txt (version 1).
+        """
+        primary = RECORDS_DIR / f"{base}.txt"
+        if _versioning_disabled() or not primary.exists():
+            return primary, "1"
+        n = 2
+        while (RECORDS_DIR / f"{base}-{n}.txt").exists():
+            n += 1
+        return RECORDS_DIR / f"{base}-{n}.txt", str(n)
+
+
+    # ==========================================================================
+    # CHAT RECORDS (data/chatlog/chatRecord.jsonl) - the single metadata store
+    # ==========================================================================
+
+    def _transcript_exists(file_name: str) -> bool:
+        """True when the transcript .txt a record points at is still on disk."""
+        return bool(file_name) and _resolve_transcript(file_name).exists()
+
+
+    def _record_to_row(record: dict) -> dict:
+        """Rebuild the frontend-facing row shape from a chatRecord.jsonl record."""
+        return {
+            "id": record.get("id"),
+            "title": record.get("title"),
+            "fileName": record.get("fileName", ""),
+            "agentId": record.get("agentId", ""),
+            "agentName": record.get("agentName") or record.get("agent", ""),
+            "model": record.get("model", ""),
+            "version": record.get("version", ""),
+            "messageCount": record.get("messageCount", 0),
+            "interactionCount": record.get("interactionCount", 0),
+            "startedAt": record.get("startedAt", ""),
+            "endedAt": record.get("endedAt", ""),
+            "status": "done",
+        }
+
+
+    def latest_per_chat(records: list) -> list:
+        """Collapse per-version records down to the LATEST record per chat id.
+
+        chatRecord.jsonl keeps one line per version; the dropdown only shows one
+        entry per chat. The file is append-only, so walking in reverse and keeping
+        the first sighting of each id yields the newest version of every chat.
+        """
+        latest = {}
+        for record in reversed(records):
+            chat_id = record.get("id")
+            if chat_id is not None and chat_id not in latest:
+                latest[chat_id] = record
+        return list(latest.values())
+
+
+    def prune_deleted() -> int:
+        """Remove chatRecord.jsonl records whose transcript .txt is gone.
+
+        Runs lazily on every list_log() so a chat whose transcript is deleted
+        manually disappears from the drop-down immediately - no server restart
+        needed. Records without a fileName are left alone. Returns count removed.
+        """
+        with _lock:
+            try:
+                return _metadata_logger.prune(
+                    lambda rec: not rec.get("fileName") or _transcript_exists(rec.get("fileName"))
+                )
+            except OSError:
+                return 0
+
+
+    def list_log(include_active=True) -> list:
+        """The log used by the frontend dropdown/sidebar, newest end first.
+
+        Stale records whose transcript .txt no longer exists are pruned first, so
+        chats deleted on disk disappear here and from chatRecord.jsonl on the next
+        refresh rather than lingering until a restart. Returns one row per chat,
+        pointing at its LATEST version.
+        """
+        prune_deleted()
+        rows = [_record_to_row(rec) for rec in latest_per_chat(_metadata_logger.list_all())]
+        if include_active:
+            active = _load_json(ACTIVE_SESSION_FILE, None)
+            if active and active.get("status") != "finalized":
+                rows.append(
+                    {
+                        "id": active.get("id"),
+                        "title": active.get("title"),
+                        "fileName": "",
+                        "agentId": active.get("agentId", ""),
+                        "agentName": active.get("agentName", ""),
+                        "model": active.get("model", ""),
+                        "version": "",
+                        "messageCount": len(active.get("messages", [])),
+                        "interactionCount": _count_interactions(active.get("messages", [])),
+                        "startedAt": active.get("startedAt"),
+                        "endedAt": "",
+                        "status": "active",
+                    }
+                )
+        rows.sort(
+            key=lambda r: r.get("endedAt") or r.get("savedAt") or r.get("startedAt") or "",
+            reverse=True,
+        )
+        return rows
+
+
+    def get_chat(chat_id: str) -> dict | None:
+        """One chat (its record w/ the transcript content/messages) to reopen it."""
+        record = _metadata_logger.get(chat_id)
+        if record:
+            path = _resolve_transcript(record.get("fileName", ""))
+            content = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+            row = _record_to_row(record)
+            return {**row, "content": content, "messages": _parse_transcript_messages(content)}
+        active = _load_json(ACTIVE_SESSION_FILE, None)
+        if active and active.get("id") == chat_id:
+            return {
+                **{
+                    "id": active.get("id"),
+                    "title": active.get("title"),
+                    "fileName": "",
+                    "agentId": active.get("agentId", ""),
+                    "agentName": active.get("agentName", ""),
+                    "model": active.get("model", ""),
+                    "version": "",
+                    "messageCount": len(active.get("messages", [])),
+                    "startedAt": active.get("startedAt"),
+                    "endedAt": "",
+                    "status": "active",
+                },
+                "content": build_transcript(active),
+                "messages": active.get("messages", []),
+            }
+        return None
+
+
+    def _fileName_version(file_name: str) -> str:
+        """'my-chat-2.txt' -> '2'; 'my-chat.txt' -> '1'."""
+        match = re.search(r"-(\d+(?:\.\d+)*)\.txt$", file_name)
+        return match.group(1) if match else "1"
+
+
+    def set_chat_version(chat_id: str, version: str) -> dict | None:
+        """Point a chat at a new versioned .txt copy (e.g. '1.1').
+
+        Used by scripts/version_chats.py: assumes the source .txt already exists
+        in data/chatlog/ and just writes the new versioned copy into
+        agent-text-records/ while adding a new (id, version, fileName) record to
+        chatRecord.jsonl. The chat's history line is preserved.
+        """
+        with _lock:
+            record = _metadata_logger.get(chat_id)
+            if not record:
+                return None
+            source = _resolve_transcript(record.get("fileName", ""))
+            if not source.exists():
+                return None
+            stem = re.sub(r"-(\d+(?:\.\d+)*)$", "", source.stem)
+            target = RECORDS_DIR / f"{stem}-{version}.txt"
+            if target.name == source.name:
+                target = RECORDS_DIR / f"{stem}-{version}-2.txt"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+            record["version"] = str(version)
+            record["fileName"] = target.name
+            try:
+                _metadata_logger.add(record)
+            except OSError:
+                pass
+            return {**record}
+
+
+    def _rebuild_header(file_name: str) -> dict:
+        """Best-effort header row for an existing .txt file (used by import_once)."""
+        path = _resolve_transcript(file_name)
+        if not path.exists():
+            return None
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            mtime = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            return None
+
+        header = parse_transcript_header(text)
+        title = header.get("title") or re.sub(r"-(\d+(\.\d+)*)?$", "", path.stem).replace("-", " ").title()
+        messages = _parse_transcript_messages(text)
+        return {
+            "id": _stable_id(file_name),
+            "title": title,
+            "fileName": file_name,
+            "agentId": "",
+            "agentName": header.get("agent_name") or "",
+            "model": "" if header.get("model") in (None, "(server default)") else header.get("model", ""),
+            "version": _fileName_version(file_name),
+            "messageCount": len(messages),
+            "interactionCount": header.get("interactionCount", _count_interactions(messages)),
+            "startedAt": "",
+            "endedAt": mtime,
+            "status": "done",
+        }
+
+
+    def _migrate_legacy_layout() -> None:
+        """Move the pre-rename layout (data/chats/* + data/discussions.json)
+        into data/chatlog/, and every .txt into agent-text-records/. Idempotent:
+        each step only runs when the target is missing and the source still
+        exists. Called from import_once() at startup.
+        """
+        # 1. Folder: data/chats -> data/chatlog (all .txt + hidden state files).
+        if _LEGACY_CHATS_DIR.is_dir() and (not CHATS_DIR.exists() or not list(CHATS_DIR.glob("*.txt"))):
+            CHATS_DIR.mkdir(parents=True, exist_ok=True)
+            for legacy in list(_LEGACY_CHATS_DIR.iterdir()):
+                target = CHATS_DIR / legacy.name
+                if not target.exists():
+                    shutil.move(str(legacy), str(target))
+            if not list(_LEGACY_CHATS_DIR.iterdir()):
+                _LEGACY_CHATS_DIR.rmdir()
+
+        # 2. Log: data/discussions.json -> data/chatlog/log-chats.json (the old
+        #    store; import_once() absorbs it into chatRecord.jsonl afterwards).
+        if not _OLD_LOGCHATS_FILE.exists() and _LEGACY_LOG_FILE.exists():
+            CHATS_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(_LEGACY_LOG_FILE), str(_OLD_LOGCHATS_FILE))
+
+        # 3. Transcripts: data/chatlog/*.txt -> data/chatlog/agent-text-records/.
+        #    (The log keeps the bare file name, so moving is safe.)
+        RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+        for legacy in list(CHATS_DIR.glob("*.txt")) + list(RECORDS_DIR.glob("*.txt")):
+            target = RECORDS_DIR / legacy.name
+            if target.exists():
+                continue
+            shutil.move(str(legacy), str(target))
+
+
+    def import_once() -> int:
+        """One-time boot sync that builds the single store, chatRecord.jsonl.
+
+        - Migrates the pre-chatRecord layout into chatRecord.jsonl:
+            * data/discussions.json  (legacy message arrays) -> .txt transcripts,
+            * data/chatlog/log-chats.json (old one-row-per-chat store),
+            * data/chatlog/chat_log.jsonl (old per-version records).
+        - Scans data/chatlog/agent-text-records/*.txt and records any file not
+          yet logged.
+        - Drops records whose transcript disappeared since the last boot.
+        - Deletes the old store files once their content is in chatRecord.jsonl.
+
+        Idempotent: the merge key is (id, fileName), so a restart never
+        duplicates. Runs once at server startup.
+        """
+        with _lock:
+            _migrate_legacy_layout()
+            migrated = 0
+            added = 0
+
+            # --- 1. Read the old stores BEFORE they are deleted ---
+            old_rows = _load_json(_OLD_LOGCHATS_FILE, []) if _OLD_LOGCHATS_FILE.exists() else []
+            old_records = chat_logger.ChatLogger(log_file=_OLD_JSONL_FILE).list_all()
+
+            # --- 2. Legacy discussion rows (no fileName, whole 'messages' arrays)
+            #         become versioned .txt transcripts, exactly as before. ---
+            new_rows = []
+            for entry in old_rows:
+                if entry.get("fileName"):
+                    new_rows.append(entry)
+                    continue
+                legacy_id = entry.get("id") or _new_id("chr")
+                if not entry.get("messages"):
+                    continue
+                session = {
+                    "id": legacy_id,
+                    "title": entry.get("title") or "Legacy import",
+                    "agentId": entry.get("agentId", ""),
+                    "agentName": entry.get("agentName", ""),
+                    "model": entry.get("model", ""),
+                    "startedAt": entry.get("createdAt") or entry.get("updatedAt") or _now_iso(),
+                    "updatedAt": entry.get("updatedAt") or _now_iso(),
+                    "endedAt": entry.get("updatedAt") or _now_iso(),
+                    "messages": [
+                        {
+                            "role": (m.get("role") or "user"),  # assistant->assistant
+                            "author": m.get("author") or ("You" if m.get("role") == "user" else "AI"),
+                            "content": (m.get("text") or m.get("content") or ""),
+                            "timestamp": m.get("timestamp", _now_iso()),
+                        }
+                        for m in (entry.get("messages") or [])
+                        if (m.get("text") or m.get("content") or "")
+                    ],
+                }
+                base = _slugify(session["title"])
+                target, version = _target_path(base)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(build_transcript(session), encoding="utf-8")
+                new_rows.append(
+                    {
+                        "id": legacy_id,
+                        "title": session["title"],
+                        "fileName": target.name,
+                        "agentId": session["agentId"],
+                        "agentName": session["agentName"],
+                        "model": session["model"],
+                        "version": str(version),
+                        "messageCount": len(session["messages"]),
+                        "interactionCount": _count_interactions(session["messages"]),
+                        "startedAt": session["startedAt"],
+                        "endedAt": session["endedAt"],
+                        "status": "done",
+                    }
+                )
+                migrated += 1
+
+            # --- 3. Merge chatRecord.jsonl + both old files by (id, fileName) ---
+            merged = {(rec.get("id"), rec.get("fileName")): rec
+                      for rec in _metadata_logger.list_all()}
+            for record in old_records:
+                key = (record.get("id"), record.get("fileName"))
+                if key not in merged:
+                    merged[key] = record
+                    migrated += 1
+            for row in new_rows:
+                key = (row.get("id"), row.get("fileName"))
+                if key not in merged:
+                    merged[key] = chat_logger.record_from_store_row(row)
+                    migrated += 1
+
+            # --- 4. Import on-disk .txt transcripts not logged yet ---
+            known = set(merged)
+            known_names = {k[1] for k in known}
+            # Scan agent-text-records/ first, then anything left in the chatlog root.
+            for scan_dir in (RECORDS_DIR, CHATS_DIR):
+                if not scan_dir.exists():
+                    continue
+                for path in sorted(scan_dir.glob("*.txt")):
+                    name = path.name
+                    if name in known_names:
+                        continue
+                    row = _rebuild_header(name)
+                    if row:
+                        key = (_stable_id(name), name)
+                        merged[key] = chat_logger.record_from_store_row(row)
+                        known_names.add(name)
+                        added += 1
+
+            # --- 5. Drop records whose transcript disappeared, then write once ---
+            records = [merged[k] for k in merged if _transcript_exists(merged[k].get("fileName", ""))]
+            write_ok = True
+            try:
+                _metadata_logger.add_missing(records)
+                _metadata_logger.prune(
+                    lambda rec: not rec.get("fileName") or _transcript_exists(rec.get("fileName"))
+                )
+            except OSError:
+                write_ok = False
+
+            # --- 6. The old stores are absorbed - delete them only on success ---
+            if write_ok:
+                for legacy in (_OLD_LOGCHATS_FILE, _OLD_JSONL_FILE):
+                    if legacy.exists():
+                        try:
+                            legacy.unlink()
+                        except OSError:
+                            pass
+
+            total = migrated + added
+            if total:
+                print(f"[CHATS] migrated {migrated} legacy record(s) and imported {added} transcript(s)")
+            return total
+
+
+    def save_discussion(discussion: dict) -> bool:
+        """Legacy /api/discussions POST: upsert one record into chatRecord.jsonl.
+
+        The server stamps updatedAt. The payload is merged into the chat's most
+        recent record (or appended when the id is new). Returns True when saved.
+        """
+        discussion_id = discussion.get("id")
+        if not discussion_id:
+            return False
+        discussion["updatedAt"] = _now_iso()
+        try:
+            _metadata_logger.update(discussion_id, discussion)
+        except OSError:
+            return False
+        return True
+
+
+    def delete_discussion(discussion_id: str) -> bool:
+        """Legacy /api/discussions DELETE: remove EVERY record for a chat id.
+
+        Returns True when at least one record was removed.
+        """
+        try:
+            return _metadata_logger.remove(discussion_id) > 0
+        except OSError:
+            return False
+
+
+    __all__ = [
+        "current_session",
+        "ensure_session",
+        "append_turn",
+        "finalize_session",
+        "list_log",
+        "get_chat",
+        "import_once",
+        "set_chat_version",
+        "save_discussion",
+        "delete_discussion",
+        "build_transcript",
+        "CHATS_DIR",
+        "RECORDS_DIR",
+        "LOG_FILE",
+    ]
+
+=================================================================
+ 4. FILE: app/chat_store/__init__.py            (NEW FILE)
+=================================================================
+NEW FILE. Empty package marker for the app.chat_store package.
+
+=================================================================
+ 5. FILE: scripts/version_chats.py            (NEW FILE)
+=================================================================
+NEW FILE (~128 lines). CLI for managing saved transcripts + versions.
+Full source:
+
+    """
+    scripts/version_chats.py
+    ========================
+
+    Small CLI for managing the saved chat transcripts + their versions.
+
+    The versioning toggle (disableVersioning in static/config/app_settings.json)
+    controls whether a re-saved chat gets a NEW versioned .txt file (<title>-2.txt,
+    <title>-3.txt, ...) or simply overwrites <title>.txt. This script can:
+
+        list                          print the chat log (title, file, version, msgs)
+        import                        run the one-time import of existing .txt files
+        versioning on|off             turn automatic version bumping on or off
+        bump <id-or-title> [version]  make a new versioned copy of a chat's file and
+                                      point the log at it (e.g. bump my-chat 1.1)
+
+    Examples:
+        python scripts/version_chats.py list
+        python scripts/version_chats.py versioning off
+        python scripts/version_chats.py bump chr-1a2b3c4d5e6f 1.1
+    """
+
+    import json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+    from app.chat_store import store  # noqa: E402
+
+
+    def _load_app_settings():
+        path = store.APP_SETTINGS_FILE
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+
+    def _save_app_settings(settings):
+        path = store.APP_SETTINGS_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+    def cmd_list(_argv):
+        rows = store.list_log(include_active=True)
+        if not rows:
+            print("(no chats in the log yet - run `import` or finish a chat first)")
+            return 0
+        for row in rows:
+            active = " [ACTIVE]" if row.get("status") == "active" else ""
+            print(
+                f"{row.get('id')}  v{row.get('version') or '-'}  "
+                f"{row.get('fileName') or '(in progress)'}{active}  "
+                f"{row.get('messageCount', 0)} msgs  "
+                f"{row.get('endedAt') or row.get('startedAt') or ''}"
+            )
+        return 0
+
+
+    def cmd_import(_argv):
+        added = store.import_once()
+        print(f"Imported {added} transcript file(s).")
+        return 0
+
+
+    def _find_row(target):
+        rows = store.list_log(include_active=False)
+        for row in rows:
+            if row.get("id") == target or row.get("title", "").lower() == str(target).lower():
+                return row
+        return None
+
+
+    def cmd_bump(argv):
+        if not argv:
+            print("usage: bump <id-or-title> [version]")
+            return 1
+        target = argv[0]
+        next_version = argv[1] if len(argv) > 1 else None
+
+        row = _find_row(target)
+        if not row:
+            print(f"chat '{target}' not found - run `list` to see ids/titles")
+            return 1
+
+        if not next_version:
+            current = row.get("version") or "1"
+            next_version = str(int(float(current)) + 1) if "." not in current else f"{float(current) + 0.1:.1f}"
+
+        updated = store.set_chat_version(row["id"], next_version)
+        if not updated:
+            print(f"could not version chat '{target}' - file '{row.get('fileName')}' is missing")
+            return 1
+        print(f"bumped '{row['title']}' -> {updated['fileName']} (v{next_version})")
+        return 0
+
+
+    def cmd_versioning(argv):
+        if not argv or argv[0] not in ("on", "off"):
+            print("usage: versioning on|off")
+            return 1
+        settings = _load_app_settings()
+        settings["disableVersioning"] = argv[0] == "off"
+        _save_app_settings(settings)
+        state = "on (re-saving overwrites <title>.txt)" if argv[0] == "off" else "off (saves get versioned copies)"
+        print(f"version bumping: {state}")
+        return 0
+
+
+    COMMANDS = {
+        "list": cmd_list,
+        "import": cmd_import,
+        "bump": cmd_bump,
+        "versioning": cmd_versioning,
+    }
+
+
+    def main():
+        if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+            print(__doc__)
+            return 1
+        return COMMANDS[sys.argv[1]](sys.argv[2:])
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+=================================================================
+ 6. FILE: server.py                          (MODIFIED)
+=================================================================
+NET DELTA:
+
+a) The chat log is now owned by app.chat_store; the old frontend-owned
+   DISCUSSIONS_FILE constant was removed, and the startup hook imports
+   any existing transcripts into the log:
+
+   BEFORE:   DISCUSSIONS_FILE = DATA_DIR / "discussions.json"
+   AFTER:    (constant removed - the legacy /api/discussions endpoints
+             below are thin wrappers over chat_store)
+
+   New import + startup comment:
+
+       from app.chat_store import store as chat_store
+
+       # Runs once at startup; scans data/chatlog/agent-text-records/*.txt and
+       # records their header info in data/chatlog/chatRecord.jsonl so past chats
+       # appear in the drop-down immediately.
+
+   And in lifespan():
+
+       async def lifespan(app: FastAPI):
+           refresh_models()           # ollama -> config/models.json
+           chat_store.import_once()   # agent-text-records/*.txt -> data/chatlog/chatRecord.jsonl
+           yield                      # serve requests; code after this runs on shutdown
+
+b) ChatRequest gained the three server-side session fields:
+
+       session_id: str = ""      # "" on the first message of a new chat
+       title: str = ""           # optional user-chosen title for the chat
+       new_chat: bool = False    # start a fresh chat (finalizes the previous one)
+
+c) POST /api/chat (`chat()`) is stateful now. The old "stateless - the
+   frontend keeps its own conversation history" behaviour is gone; the
+   flow became:
+
+       session = chat_store.ensure_session(
+           agent, session_id=data.session_id, title=data.title, new_chat=data.new_chat
+       )
+       for turn in session.get("messages", []):
+           agent.messages.append({"role": turn.get("role"), "content": turn.get("content", "")})
+       reply = agent.think(data.message)
+       session = chat_store.append_turn(data.message, reply) or session
+       return {"reply": reply, "session_id": session["id"], "title": session.get("title", "")}
+
+d) THREE NEW ENDPOINTS were added right after /api/chat:
+
+       # --- CHAT SESSIONS (server-side organization) ---
+       @app.get("/api/chats")
+       async def list_chats():
+           return {"chats": chat_store.list_log()}
+
+       @app.get("/api/chats/{chat_id}")
+       async def get_chat(chat_id: str):
+           chat = chat_store.get_chat(chat_id)
+           if not chat:
+               raise HTTPException(status_code=404, detail=f"Chat '{chat_id}' not found")
+           return chat
+
+       @app.post("/api/chats/end")
+       async def end_chat(payload: dict = None):
+           payload = payload or {}
+           row = chat_store.finalize_session(title=payload.get("title") or payload.get("chatTitle"))
+           if not row:
+               return {"finalized": False, "saved": False, "error": "No active chat to finalize."}
+           return {"finalized": True, "saved": True, "file": row["fileName"], "id": row["id"], "version": row["version"]}
+
+e) /api/discussions GET/POST/DELETE were all rewired to chat_store
+   (they no longer touch a JSON array on disk):
+
+   GET:
+       @app.get("/api/discussions")
+       async def list_discussions():
+           """Every stored chat header row, newest first (the log)."""
+           return {"discussions": chat_store.list_log()}
+
+   POST: the `_load_json/save_json` upsert loop was replaced by one call:
+       saved = chat_store.save_discussion(discussion)
+       if saved:
+           print(f"[DISCUSSIONS] saved '{discussion_id}'")
+       return {"saved": saved}
+
+   DELETE: the array filter was replaced by:
+       deleted = chat_store.delete_discussion(discussion_id)
+       if not deleted:
+           raise HTTPException(status_code=404, detail=f"Discussion '{discussion_id}' not found")
+       print(f"[DISCUSSIONS] deleted '{discussion_id}'")
+       return {"deleted": True, "id": discussion_id}
+
+f) The default chat output folder changed. In `_resolve_chat_dir()`,
+   BOTH the empty-path branch and the re-root fallback now resolve to
+   the new transcripts home:
+
+   BEFORE:   BASE_DIR / "data" / "chats"
+   AFTER:    BASE_DIR / "data" / "chatlog" / "agent-text-records"
+
+g) /api/chat-save finalizes the ACTIVE chat instead of writing the
+   browser's raw blob; the legacy path stays as a fallback:
+
+       row = chat_store.finalize_session(title=payload.get("title"))
+       if row:
+           return {"saved": True, "file": str(chat_store.RECORDS_DIR / row["fileName"]), "id": row["id"]}
+
+       content = payload.get("content")
+       if content is None:
+           return {"saved": False, "error": "No active chat to finalize, and no 'content' supplied."}
+
+       # Legacy fallback: write the raw blob (used by older clients).
+       (unchanged sanitize/append behaviour after this point)
+
+=================================================================
+ 7. FILE: static/js/api/api.js               (MODIFIED)
+=================================================================
+NET DELTA:
+
+a) sendChat() now passes the server session fields and returns the
+   session id/title (signature and docstring changed):
+
+       export async function sendChat({ message, agentId = "", model = "", history = [], sessionId = "", title = "", newChat = false }) {
+           const data = await request("/api/chat", {
+               method: "POST",
+               body: JSON.stringify({
+                   message,
+                   model,
+                   agent_id: agentId,
+                   history,
+                   session_id: sessionId,
+                   title,
+                   new_chat: newChat,
+               }),
+           });
+           return { reply: data.reply, session_id: data.session_id, title: data.title };
+       }
+
+   (The old variant returned only `data.reply` and only sent message/
+   model/agent_id/history.)
+
+b) THREE NEW wrapper functions were added:
+
+       /** Header rows for every saved chat + the active one, newest first. */
+       export async function listChats() {
+           const data = await request("/api/chats");
+           return data.chats || [];
+       }
+
+       /** One chat: its log row + the .txt content + parsed messages. */
+       export async function getChat(chatId) {
+           return request(`/api/chats/${encodeURIComponent(chatId)}`);
+       }
+
+       /**
+        * Finalize the active chat: writes its .txt (next version on a name
+        * collision) and logs it. Safe to call even when nothing is active.
+        */
+       export async function endChat({ title = "" } = {}) {
+           return request("/api/chats/end", {
+               method: "POST",
+               body: JSON.stringify({ title }),
+           });
+       }
+
+=================================================================
+ 8. FILE: static/js/classes/ChatSession.js  (MODIFIED)
+=================================================================
+NET DELTA: server-session tracking - two small additions + one reset.
+
+a) Constructor now also initializes the binding:
+
+       this.sessionId = null;        // server-side session id (null = not started yet)
+
+b) New method added to the class:
+
+       /** Bind the chat to a server-tracked session and remember its title. */
+       setSessionId(sessionId, title) {
+           this.sessionId = sessionId || null;
+           if (title) {
+               this.title = title;
+           }
+       }
+
+c) newChat() also resets it (so a fresh chat starts a fresh server
+   session):
+
+       this.sessionId = null;
+
+=================================================================
+ 9. FILE: static/js/app.js                  (MODIFIED)
+=================================================================
+NET DELTA:
+
+a) A "Chat" section was added to the corner widget's panel
+   (`buildAgentConfig`) so the user can name the chat:
+
+       {
+           title: "Chat",
+           fields: [
+               {
+                   type: "input",
+                   name: "chatTitle",
+                   label: "Chat title",
+                   placeholder: "Name this chat...",
+                   value: "",
+               },
+           ],
+       },
+
+b) handleSend() now forwards the server session fields and stores the
+   returned session id:
+
+       const panelValues = widget.getPanelValues();
+       const userTitle = String(panelValues.chatTitle || "").trim();
+
+       const result = await api.sendChat({
+           message: text,
+           agentId: session.agentId,
+           model: session.model,
+           history: session.getApiHistory(),
+           sessionId: session.sessionId || "",
+           title: userTitle,
+           newChat: !session.sessionId,
+       });
+
+       session.addAssistantMessage(result.reply);
+       chat.addAssistantMessage(result.reply, session.agentName);
+       session.setSessionId(result.session_id, result.title);
+       chat.setSaveStatus(
+           session.sessionId ? "Chat tracked on the server." : "Chat saved.",
+           "ok"
+       );
+
+c) autoSave() was REMOVED and replaced by a server-side save handler.
+   The old handler POSTed {path, fileName, title, agentName, model,
+   content} to /api/chat-save every reply; the new one only runs on the
+   explicit "Save chat" action, prompts for a title when none is set,
+   and calls the new /api/chats/end endpoint:
+
+       async function handleSaveAction(session, chat) {
+           if (!session || !session.sessionId) {
+               chat.setSaveStatus("No active chat to save yet.", "error");
+               return;
+           }
+           try {
+               const panelValues = widget.getPanelValues();
+               let title = String(panelValues.chatTitle || "").trim();
+               if (!title) {
+                   const subject = window.prompt(
+                       "Name this chat:",
+                       session.title !== "New chat" ? session.title : ""
+                   );
+                   if (subject !== null && subject.trim()) {
+                       title = subject.trim();
+                   }
+               }
+               const result = await api.endChat({ title });
+               chat.setSaveStatus(
+                   result.saved
+                       ? `Saved: ${result.file} (v${result.version})`
+                       : `Save failed: ${result.error || "no active chat"}`,
+                   result.saved ? "ok" : "error"
+               );
+           } catch (error) {
+               chat.setSaveStatus(`Save failed: ${error.message}`, "error");
+           }
+       }
+
+d) The experimental auto-"hi" in selectSession() no longer auto-sends;
+   it pre-fills "hi" and focuses the input so you can title first:
+
+   BEFORE:   widget.setInputValue(AUTO_HI_TEXT);  widget.send();
+   AFTER:    widget.setInputValue(AUTO_HI_TEXT);  widget._input?.focus();
+
+=================================================================
+ 10. FILE: static/chat.html                  (MODIFIED)
+=================================================================
+NET DELTA (the standalone chat page gained saved-chat support):
+
+a) CSS - two new rule groups:
+       `.sc-header-select` (the new saved-chats drop-down in the header)
+       `.sc-field-input`   (the new input-style panel field)
+   Both after their existing neighbors in the stylesheet.
+
+b) Header - a "Saved chats" selector was added to the actions row,
+   right before the New Chat button:
+
+       <select
+           class="sc-header-select"
+           id="sc-chats"
+           aria-label="Saved chats"
+           title="Open a previous chat">
+           <option value="">All chats...</option>
+       </select>
+
+c) PANEL_SECTIONS gained a "Chat" section with a titled input:
+
+       {
+           title: "Chat",
+           fields: [
+               {
+                   type: "input",
+                   name: "chatTitle",
+                   label: "Chat title",
+                   placeholder: "Name this chat...",
+               }
+           ]
+       },
+
+d) createField() gained a new `"input"` case (builds the
+   `.sc-field-input` text node with data-name set).
+
+e) The inline ChatSession class got the same session tracking as the
+   main app's ChatSession.js (constructor `this.sessionId = null;`,
+   new `setSessionId(sessionId, title)` method, reset inside newChat()).
+
+f) DOM gained `chats: document.getElementById("sc-chats")`.
+
+g) sendChat() (the inline fetch wrapper) now sends session fields and
+   returns the session:
+
+       body: { ..., history, session_id: sessionId, title, new_chat: newChat }
+       return { reply: data.reply, session_id: data.session_id, title: data.title };
+
+h) Section "12. SAVE CHAT" was REPLACED by "12. SAVED CHATS (log +
+   drop-down)":
+
+   - autoSave() (which POSTed {path, fileName, content, ...} to
+     /api/chat-save after every reply) was REMOVED.
+   - New functions were added:
+
+       async function loadChatsDropdown() { ... }        // GET /api/chats
+       async function openChat(id) { ... }                // GET /api/chats/<id>,
+                                                          //   renders read-only bubbles,
+                                                          //   sets activeSession.sessionId = null
+       async function refreshChatsDropdown() { ... }      // rebuilds the <select>,
+                                                          //   appends " (v<version>)" / " (active)"
+       function handleChatsSelect() { ... }               // change handler -> openChat(id)
+
+i) handleSend() now gathers the chat title and passes session fields:
+
+       const values = getPanelValues();
+       const userTitle = String(values.chatTitle || "").trim();
+       const result = await sendChat({
+           message: text,
+           agentId: activeAgent.id,
+           model: activeSession.model,
+           history: activeSession.getApiHistory(),
+           sessionId: activeSession.sessionId || "",
+           title: userTitle,
+           newChat: !activeSession.sessionId,
+       });
+       activeSession.setSessionId(result.session_id, result.title);
+
+   Status text changed from "Chat saved." to "Chat tracked on the
+   server."
+
+j) startNewChat() became async and now finalizes the active chat on the
+   server before clearing:
+
+       async function startNewChat() {
+           await finalizeActiveChat({ quiet: true });
+           if (activeSession) { activeSession.newChat(); }
+           clearMessages();
+           await refreshChatsDropdown();
+           setSaveStatus("New chat. Name it in the panel, then send your message.", "ok");
+           DOM.input.focus();
+       }
+
+k) NEW central function finalizeActiveChat() - the single source of
+   truth for Save/Clear/New Chat. Prompts for a title when none is set,
+   POSTs /api/chats/end, and reports the saved file + version. Docstring
+   states it "prompts on Save, Clear AND any new-chat".
+
+l) maybeAutoHi() no longer auto-sends (BEFORE: `handleSend();` AFTER:
+   the prefill exists but the call to handleSend was removed, with the
+   comment: "it does NOT auto-send, so you get a chance to add a title
+   first.").
+
+m) window.__scActions changed:
+
+   BEFORE:
+       save()        { if (!activeSession || activeSession.isEmpty) {...; return;} autoSave(activeSession); }
+       clearChat()   { startNewChat(); }
+
+   AFTER:
+       save()        { return finalizeActiveChat(); }
+       clearChat()   { return startNewChat(); }
+
+n) boot() now refreshes the drop-down (and its no-longer-send "hi"):
+
+       maybeAutoHi();
+       await refreshChatsDropdown();
+       DOM.input.focus();
+
+o) Wiring at the bottom - new change listener + a setWaiting wrapper so
+   the drop-down refreshes as the active chat grows:
+
+       DOM.chats.addEventListener("change", handleChatsSelect);
+
+       const _origSetWaiting = setWaiting;
+       setWaiting = function (waiting) {
+           _origSetWaiting(waiting);
+           if (!waiting) {
+               refreshChatsDropdown();
+           }
+       };
+
+=================================================================
+ 11. FILE: static/css/styles.css             (MODIFIED)
+=================================================================
+NET DELTA: one new rule group after the existing `code {}` block - a
+toggle-switch flavour of the `.field` row (used by the new "Disable
+chat versioning" setting):
+
+    .field-toggle { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+    .field-toggle input { position: absolute; width: 38px; height: 22px; opacity: 0; cursor: pointer; }
+    .field-toggle .field-switch { position: relative; flex: 0 0 auto; width: 38px; height: 22px; }
+    .field-toggle .field-switch::before { ... border-radius: 999px; background: #cbd5e1; ... }
+    .field-toggle .field-switch::after  { ... width: 16px; height: 16px; border-radius: 50%; ... }
+    .field-toggle input:checked + .field-switch::before { background: var(--color-primary); }
+    .field-toggle input:checked + .field-switch::after  { transform: translateX(16px); }
+
+=================================================================
+ 12. FILE: static/js/ui/config-form.js       (MODIFIED)
+=================================================================
+NET DELTA:
+
+a) The chat-save-path placeholder was reworded to the new transcripts
+   folder:
+
+   BEFORE:   pathInput.placeholder = "e.g. data/chats or absolute folder";
+   AFTER:    pathInput.placeholder = "e.g. data/chatlog/agent-text-records or absolute folder";
+
+b) A "Disable chat versioning" toggle row was added after the path
+   field (checkbox + label + `.field-switch`, note text: "On: re-saving
+   a chat overwrites <title>.txt. Off (default): re-saving writes the
+   next version (<title>-2.txt, ...)."), and its value is now returned
+   from `values()`:
+
+   BEFORE:   chatSavePath: byId("chat-save-path").value.trim(),
+   AFTER:    chatSavePath: byId("chat-save-path").value.trim(),
+             disableVersioning: byId("disable-versioning").checked,
+
+=================================================================
+ 13. FILE: static/config/app_settings.json   (MODIFIED)
+=================================================================
+NET DELTA: one new key appended (the frontend /api/settings endpoint
+persists it as JSON):
+
+    "disableVersioning": false
+
+=================================================================
+ 14. FILE: README.md                         (MODIFIED)
+=================================================================
+NET DELTA:
+
+a) The data-flow diagram now shows the session + transcript path
+   (BEFORE it ended at "Ollama"):
+
+       server.py appends the turn to the active chat and returns {reply, session_id, title}
+         ↓ (on "Save chat" / new chat)
+       chat_store.finalize_session() writes data/chatlog/agent-text-records/<title>[-v].txt
+       + logs it in data/chatlog/chatRecord.jsonl
+
+b) NEW section "Chats: one server-side session at a time" (one active
+   session; .active-chat.json; versioned transcripts; chatRecord.jsonl
+   as the log with one line per version; startup import) plus the
+   versioning helper line:
+
+       Version helpers: `python scripts/version_chats.py list | import | bump
+       <id-or-title> [version] | versioning on|off`.
+
+c) API table: /api/chat row rewritten to show the new fields, and four
+   rows added:
+
+       | POST /api/chat | `{message, model, agent_id, history, session_id?, title?, new_chat?}` → `{reply, session_id, title}` |
+       | GET /api/chats | Chat log + the active chat (feeds the chats drop-down) |
+       | GET /api/chats/{id} | One chat: log row + `.txt` content + parsed messages |
+       | POST /api/chats/end | Finalize the active chat into a versioned `.txt` + log it |
+       | POST /api/chat-save | Finalize the active chat (kept for legacy clients) |
+       | GET/POST/DELETE /api/discussions | The same chat log (chatRecord.jsonl records) |
+
+d) Notes: the "Chat requests are stateless..." note was replaced with
+   the new server-owned-session note; the transcripts/log paths were
+   added.
+
+=================================================================
+ 15. DELETED DATA FILES
+=================================================================
+The following runtime data files were removed/consolidated as part of
+the migration (their content is now represented by data/chatlog/):
+
+   - data/discussions.json                     (the old chat log, ~180 lines)
+   - data/chats/*.txt                          (25 hand-saved transcripts,
+       hello-20260901-1019.txt ... hi-20260903-0051.txt,
+       how-do-transition-carrers-to-ai-agent-implementer-20260903-0011.txt,
+       what-time-is-it-20260903-0013.txt)
+
+New data home (created by the boot migration / first finalize):
+
+   - data/chatlog/chatRecord.jsonl             (JSONL; empty until a chat ends)
+   - data/chatlog/.active-chat.json            (live session)
+   - data/chatlog/agent-text-records/          (transcripts dir; empty)
+
+=================================================================
+ 16. FILES NOT CHANGED IN THIS DELTA
+=================================================================
+The following live files are identical to their V1.2 capture; no updates
+were made to them in this round:
+
+   - static/index.html
+   - static/js/classes/chat-window.js
+   - static/js/logic/models.js
+   - static/js/logic/chat-formatter.js
+   - static/js/ui/markdown.js
+   - static/js/ui/config.js
+   - static/js/ui/agents.js                (keeps the V1.2 window.open
+                                            behaviour untouched)
+   - config/  (models.json, settings.json)
+   - agent_library/
+   - requirements.txt
+
+   (The untouched backend - the whole app/ tree EXCEPT the new
+    app/chat_store/ package: app/core, app/agents, app/tools etc. - was
+    also unchanged this round.)
+
+=================================================================
+ 17. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_enchilada_v1-3.txt`. It is an "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline (the_entire_enchilada_v1-2.txt). It is NOT a full source dump;
+it describes each changed file, the exact deltas, and the new/added
+code, plus an explicit list of files that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, `static/`, and the backend under
+   `app/`) against the versions/descriptions captured in
+   `the_entire_enchilada_v1-3.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_enchilada_v1-4.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).

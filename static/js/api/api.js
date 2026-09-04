@@ -52,10 +52,14 @@ export async function getAgents() {
 }
 
 /**
- * Send one chat message and return the reply text.
- * The server is stateless - we send history along every time.
+ * Send one chat message and return the server's reply + the tracked session.
+ *
+ * The server now owns the conversation: it returns a session_id you must send
+ * back on every later message so the same chat keeps its own start/middle/end.
+ * Pass newChat=true (or leave session_id empty) to start a fresh chat, which
+ * finalizes whatever chat was active before.
  */
-export async function sendChat({ message, agentId = "", model = "", history = [] }) {
+export async function sendChat({ message, agentId = "", model = "", history = [], sessionId = "", title = "", newChat = false }) {
     const data = await request("/api/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -63,9 +67,34 @@ export async function sendChat({ message, agentId = "", model = "", history = []
             model,
             agent_id: agentId,
             history,
+            session_id: sessionId,
+            title,
+            new_chat: newChat,
         }),
     });
-    return data.reply;
+    return { reply: data.reply, session_id: data.session_id, title: data.title };
+}
+
+/** Header rows for every saved chat + the active one, newest first. */
+export async function listChats() {
+    const data = await request("/api/chats");
+    return data.chats || [];
+}
+
+/** One chat: its log row + the .txt content + parsed messages. */
+export async function getChat(chatId) {
+    return request(`/api/chats/${encodeURIComponent(chatId)}`);
+}
+
+/**
+ * Finalize the active chat: writes its .txt (next version on a name collision)
+ * and logs it. Safe to call even when nothing is active.
+ */
+export async function endChat({ title = "" } = {}) {
+    return request("/api/chats/end", {
+        method: "POST",
+        body: JSON.stringify({ title }),
+    });
 }
 
 /** Load the stored browser settings; {} when nothing saved yet. */
