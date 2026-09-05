@@ -815,6 +815,55 @@ def delete_discussion(discussion_id: str) -> bool:
         return False
 
 
+def delete_chat(chat_id: str) -> dict:
+    """Erase a chat completely: its log records, EVERY versioned .txt transcript,
+    and the live active session when it is the one being deleted.
+
+    The records alone are not enough - import_once() rescans the transcript
+    folder on boot, so the .txt files must be unlinked too or the chat would
+    come back. Returns a summary dict, or an all-zero dict when the id is
+    unknown (callers decide whether that is an error).
+    """
+    with _lock:
+        records = _metadata_logger.list_all()
+        mine = [record for record in records if record.get("id") == chat_id]
+
+        files_removed = []
+        for record in mine:
+            file_name = record.get("fileName", "")
+            if not file_name:
+                continue
+            path = _resolve_transcript(file_name)
+            try:
+                if path.exists():
+                    path.unlink()
+                    files_removed.append(file_name)
+            except OSError:
+                continue
+
+        records_removed = _metadata_logger.remove(chat_id)
+
+        was_active = False
+        active = _load_json(ACTIVE_SESSION_FILE, None)
+        if active and active.get("id") == chat_id:
+            was_active = True
+            try:
+                ACTIVE_SESSION_FILE.unlink()
+            except OSError:
+                pass
+
+        if records_removed or files_removed or was_active:
+            print(
+                f"[CHATS] deleted '{chat_id}' "
+                f"({len(files_removed)} file(s), {records_removed} record(s), active={was_active})"
+            )
+        return {
+            "recordsRemoved": records_removed,
+            "filesRemoved": files_removed,
+            "wasActive": was_active,
+        }
+
+
 __all__ = [
     "current_session",
     "ensure_session",
@@ -826,6 +875,7 @@ __all__ = [
     "set_chat_version",
     "save_discussion",
     "delete_discussion",
+    "delete_chat",
     "build_transcript",
     "CHATS_DIR",
     "RECORDS_DIR",

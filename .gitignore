@@ -12,6 +12,9 @@ server.err.log
 *.log
 logs/
 
+# Runtime data (chat records, active session, exports)
+data/
+
 # OS / editor junk
 .DS_Store
 Thumbs.db

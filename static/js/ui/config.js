@@ -9,6 +9,8 @@
 
 import { getModels, getAgents, loadAppSettings } from "../api/api.js";
 import { buildConfigForm } from "./config-form.js";
+import { renderChatTests } from "./chat-tests.js";
+import { applyAppearance, renderAppearance } from "./appearance.js";
 
 /**
  * Render the config section.
@@ -26,7 +28,7 @@ export async function renderConfig({ mountId = "config-section", onChanged }) {
     mount.replaceChildren();
     const statusEl = document.createElement("div");
     statusEl.className = "status-message";
-    mount.appendChild(el("h2", "Configuration"));
+    mount.appendChild(el("h2", "config-section-heading", "Configuration"));
 
     // Fetch everything we need in parallel.
     let agents = [];
@@ -62,6 +64,7 @@ export async function renderConfig({ mountId = "config-section", onChanged }) {
         try {
             const { saveAppSettings } = await import("../api/api.js");
             const updated = await saveAppSettings(payload);
+            settings = updated;
             statusEl.textContent = "Settings saved.";
             statusEl.className = "status-message ok";
             if (typeof onChanged === "function") {
@@ -73,6 +76,42 @@ export async function renderConfig({ mountId = "config-section", onChanged }) {
         } finally {
             save.disabled = false;
         }
+    });
+
+    // Chat Tests — one collapsible section per discovered agent. It shows the
+    // agent's saved tests, lets you add/delete/toggle them, and can run them
+    // inline against /api/chat. It grows/contracts with the agent library.
+    const chatTestsMount = document.createElement("div");
+    chatTestsMount.id = "chat-tests-section";
+    mount.appendChild(chatTestsMount);
+
+    renderChatTests({
+        mountEl: chatTestsMount,
+        agents,
+        settings,
+        onSave: (updated) => {
+            settings = updated || settings;
+            if (typeof onChanged === "function") {
+                onChanged(updated);
+            }
+        },
+    });
+
+    // Appearance — one global font + font-size set applied to both this page
+    // and static/chat.html.
+    const appearanceMount = document.createElement("div");
+    appearanceMount.id = "appearance-section";
+    mount.appendChild(appearanceMount);
+
+    renderAppearance({
+        mountEl: appearanceMount,
+        settings,
+        onSave: (updated) => {
+            settings = updated || settings;
+            if (typeof onChanged === "function") {
+                onChanged(updated);
+            }
+        },
     });
 }
 

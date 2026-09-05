@@ -52,9 +52,21 @@ export async function renderAgents({
     return agents;
 }
 
+function monogram(name) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 function buildCard(agent, onSelect) {
     const card = document.createElement("article");
     card.className = "card";
+
+    const avatar = document.createElement("div");
+    avatar.className = "card-avatar";
+    avatar.textContent = monogram(agent.name || "?");
+    card.appendChild(avatar);
 
     const title = document.createElement("h3");
     title.textContent = agent.name;

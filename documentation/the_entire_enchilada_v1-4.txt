@@ -1,0 +1,505 @@
+=================================================================
+ the_entire_enchilada_v1-4.txt
+ UPDATES SINCE: the_entire_enchilada_v1-3.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1.3)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_enchilada_v1-3.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the exact
+deltas, and any new code that was added. Files that did NOT change are
+listed at the end so it is clear nothing was missed.
+
+NOTE ON PRE-EXISTING WORK: the working tree already contained a few
+uncommitted changes when this round started (the chip-page rewrite of
+static/chat.html incl. bubble action buttons, DELETE /api/chats/{id},
+store.delete_chat()). They predate v1-4's changes but are NOT in v1-3
+either, so they are archived here as well and flagged as "STARTED
+ROUND" so their origin is unambiguous.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+The Chat Tests feature moved OUT of the standalone chat page and INTO
+the index page's Configuration section, and its runner became a full
+inline runner.
+
+Before (V1.3 / chat.html):
+   - chat.html owned the whole test system: a `§15b CHAT TESTS` JS
+     block with its own draft/expectation UI, a `FALLBACK_TESTS` list,
+     DOM refs (testBar/testStatusText/testResults), a `createField`
+     "steps" case, hooks on __scActions, and a `.sc-steps` CSS engine.
+   - The index page had a `chatTests.enabled` checkbox (via the config
+     form) but NO test list UI, NO way to add/delete/run anything, and
+     an untracked static/js/ui/chat-tests.js module existed but was not
+     wired into any page.
+
+After (V1.4):
+   1. chat.html is a chat page again. The dead test engine (CSS +
+      JS + DOM) was deleted wholesale; boot() no longer calls
+      initChatTests(); agents switching no longer render test steps.
+   2. index.html's Configuration section now renders a full "Chat Tests"
+      panel below the config form - one collapsible card PER imported
+      agent (grows/contracts with the agent library), with saved-test
+      lists, add/delete toggles, and Enable All / Disable All.
+   3. Tests RUN INLINE on index.html against /api/chat - no page
+      switch, no runTests=1 popup. Each agent-run drives one live
+      server session (new_chat on the first turn, session_id reused
+      afterwards), the same string/regex/type expectation engine as the
+      old page, per-test verdicts, a Stop button, and a summary line.
+   4. Tests kept the existing storage: settings.chatTests.tests[] in
+      static/config/app_settings.json, merged by the server. Tests may
+      carry agentId to scope them to one agent; global tests (no
+      agentId) still run for every agent.
+   5. Chat page layout got roomier (wider content column, tighter panel
+      header, save-status bar moved into the composer, and the side
+      panel auto-collapses on <=900px at boot so mobile gets the full
+      width).
+
+Supporting fixes along the way:
+   - index.html's Configuration heading was an empty <h2> (the title was
+     passed as the class name, so the heading was invisible). Fixed.
+   - The forward-message picker excluded the current agent and is sorted
+     by name with one-line truncation.
+
+=================================================================
+ 2. FILE: static/js/ui/chat-tests.js            (NEW FILE - THIS ROUND)
+=================================================================
+NEW FILE (the untracked module that predates this round is now a real,
+wired, fully-rewritten feature). Builds the "Chat Tests" section:
+
+    import { sendChat } from "../api/api.js";
+
+    export function renderChatTests({ mountEl, agents = [], settings = {}, onSave }) { ... }
+
+Contract:
+  - mountEl       container to append into (#chat-tests-section on index)
+  - agents        [{id, name, mode, description}] from /api/agents
+  - settings      the app settings object (settings.chatTests.tests is READ
+                  and MUTATED in place; saved via POST /api/settings)
+  - onSave        (newSettings) => void, called after every successful save
+
+Top-level UI:
+  - "Chat Tests" .config-section-heading + a .config-note intro.
+  - Enable all / Disable all buttons (toolbar): flip test.enabled on
+    every test, POST, then re-render all cards. On a failed save the
+    previous enabled values are restored.
+  - .chat-tests-cards: one card per agent (panel.agent-test-card) with a
+    click-to-toggle header (name, mode badge, test count), a test list,
+    a "Add a new test" step builder, and an inline runner block.
+
+Key behaviors (net vs. the previous standalone module):
+  - ADDED    agentId scoping: a test with agentId runs only for that agent;
+             global tests (no agentId) run for every agent. The step
+             builder stamps new tests with the card's agent.id.
+  - ADDED    testsForAgent() helper - the "which tests would run here"
+             filter (enabled !== false AND (global OR scoped)).
+  - ADDED    inline run engine startTestRun(): loops the enabled tests for
+             one agent, drives ONE server session per run:
+
+                 const result = await sendChat({
+                     message: script[index],
+                     agentId: agent.id,
+                     model,
+                     history: run.history,
+                     sessionId: run.sessionId,
+                     title: test.name,
+                     newChat: !run.sessionId,
+                 });
+                 if (!run.sessionId) {
+                     run.sessionId = result.session_id || "";
+                 }
+                 finalReply = result.reply || "";
+                 run.history.push({ role: "user", content: script[index] });
+                 run.history.push({ role: "assistant", content: finalReply });
+
+             - per-step expectations (test.expectations[i]) checked after
+               each step; the first failure aborts that test with the
+               offending step number.
+             - a final test.expectedResult check on the last reply.
+             - per-test catch => {status:"Error"} verdict, run continues.
+             - Stop button sets run.cancelled; the loop breaks after the
+               current step and the summary reads "Stopped after x/y".
+  - ADDED    renderRun(): status line (Running... / summary with
+             pass/errored colouring) + a verdict list (name/status) under
+             the buttons. Run button resets to "Run tests for <name>" and
+             Stop hides when finished.
+  - KEPT     the same expectation engine as chat.html had:
+             string (case-insensitive substring), regex (new RegExp(v,"i")),
+             type: nonEmpty + number (digits kept, compared numerically).
+  - KEPT     step builder: message input + "+ Add Step", draft list, Commit
+             as Test (dedups by step content, stamps agentId), Clear Steps.
+  - KEPT     per-test row: enabled checkbox (saves immediately), name, step
+             count, delete "x" button (saves immediately, re-renders).
+  - REMOVED  window.open("chat.html?agent=...&runTests=1") - replaced by
+             the inline runner.
+
+Runner state: `const runs = new Map()` keyed by agent.id so every agent
+can have its own in-flight/finished run independently.
+
+Test persistence stays: one test = {id, name, agentId?, steps[], input?,
+expectedResult?, enabled?}; saveTests() POSTs {chatTests:{enabled,tests}}
+to /api/settings and calls onSave(data.settings) so config.js can refresh
+its cached settings. (server.py merges, so unrelated settings survive.)
+
+=================================================================
+ 3. FILE: static/js/ui/config.js               (CHANGED - THIS ROUND)
+=================================================================
+Net deltas:
+  1. IMPORT added at the top:
+
+       import { renderChatTests } from "./chat-tests.js";
+
+  2. FIXED the invisible Configuration heading. It was
+
+       mount.appendChild(el("h2", "Configuration"));       // bug: title
+                                                           // used as class,
+                                                           // empty text
+
+     (el's signature is el(tag, className, text), so "Configuration"
+      landed in className and the h2 rendered with no text.)
+
+     Now:
+
+       mount.appendChild(el("h2", "config-section-heading", "Configuration"));
+
+  3. After the main form's actions and status-message, the section now
+     appends a dedicated Chat Tests mount and renders into it:
+
+       const chatTestsMount = document.createElement("div");
+       chatTestsMount.id = "chat-tests-section";
+       mount.appendChild(chatTestsMount);
+
+       renderChatTests({
+           mountEl: chatTestsMount,
+           agents,
+           settings,
+           onSave: (updated) => {
+               settings = updated || settings;
+               if (typeof onChanged === "function") {
+                   onChanged(updated);
+               }
+           },
+       });
+
+     (agents + settings are whatever this renderConfig call already
+      fetched from /api/agents and /api/settings, so no extra requests.)
+     No other function in config.js was touched.
+
+=================================================================
+ 4. FILE: static/css/styles.css                 (CHANGED - THIS ROUND)
+=================================================================
+All changes live in the "SECTION 7: CONFIG panel" area (after .config-note):
+
+    #config-section .config-section-heading {
+        font-size: 17px;
+        letter-spacing: 0.2px;
+        margin: 26px 0 2px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--color-border, #e1e5e8);
+    }
+
+    .chat-tests-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 10px 0 14px;
+    }
+
+    .chat-tests-cards .agent-test-card-header:hover {
+        background: var(--color-surface-hover, #f4f6f8);
+    }
+
+    .agent-test-card .test-row:hover {
+        background: var(--color-surface-hover, #f4f6f8);
+    }
+
+    @media (max-width: 880px) {
+        .chat-tests-toolbar {
+            margin: 8px 0 10px;
+        }
+    }
+
+Card styling (panel/.badge/.btn/.btn-small + inline styles) reuses the
+existing design tokens; no new tokens were introduced.
+
+=================================================================
+ 5. FILE: static/chat.html                     (HEAVILY CHANGED)
+=================================================================
+Two groups of changes. Group A was already in the working tree when this
+round started (STARTED ROUND); Group B is this round's work.
+
+GROUP A - STARTED ROUND (uncommitted vs. v1-3, now archived here):
+
+  A1. Bubble action buttons on messages (copy / fold code / forward /
+      bookmark) with hover reveal. copyBubble(), toggleCodeView(),
+      forwardToAgent() -> opens chat.html?agent=<id>&prefill=<text>,
+      bookmarkBubble(). Backed by a __scActions object exposed to the
+      inline script so the page stays self-contained.
+  A2. Chat page restyle (sc- prefix classes, roomier reading column,
+      redesigned header/side panel/composer). This is the post-v1.3
+      rewrite of static/chat.html; v1-3's changelog therefore does not
+      describe it, and neither does section 6 below beyond this round's
+      layout tweaks.
+
+GROUP B - NEXT SECTION: see section 6 (THIS ROUND'S chat.html deltas).
+
+The chat page is still a single self-contained HTML file (HTML + CSS +
+JS inline, sc- prefix, no external JS/CSS imports).
+
+=================================================================
+ 6. FILE: static/chat.html                     (THIS ROUND'S DELTAS)
+=================================================================
+
+B1. REMOVED the dead chat-test engine (fixes the boot crash where
+    initChatTests()/renderTestStepList() touched removed DOM). Exact
+    removals:
+  - CSS block `.sc-test-bar` / `.sc-test-results` / `.sc-test-row` /
+    `.sc-steps` (test preview styles).
+  - `FALLBACK_TESTS` constant.
+  - DOM refs `testBar`, `testStatusText`, `testResults`.
+  - `__scActions` entries for the test system; only `save` and
+    `clearChat` remain.
+  - `createField(...)` "steps" case in the Behavior-field builder.
+  - The whole `§15b CHAT TESTS` JS section (~785 lines): draft state,
+    expectation builder, runSingleTest(), checkExpectation(),
+    commitChatTest(), getChatTestSettings(), renderTestStepList(), etc.
+  - `renderTestStepList();` inside switchToAgent().
+  - `initChatTests();` inside boot().
+  (File shrank 4423 -> ~3633 lines. Verified: no remaining references to
+   initChatTests / renderTestStepList / runSingleTest / commitChatTest /
+   FALLBACK_TESTS / testBar / testStatusText.)
+
+B2. LAYOUT - reading column wider:
+       --content-width: 920px  ->  --content-width: 1020px
+
+B3. LAYOUT - panel header tighter:
+       .sc-panel-header { min-height: 48px; padding: 0 16px; }
+       ->                 min-height: 40px; padding: 0 14px;
+
+B4. save-status moved from the side panel into the composer. The element
+    was removed from the panel header (panel header + sections now sit
+    adjacent) and its markup was re-added ABOVE the composer input row so
+    the save feedback sits under the chat column:
+
+       <div class="sc-composer">
+           <div
+               class="sc-save-status"
+               id="sc-save-status"
+               role="status">
+           </div>
+           <div class="sc-composer-inner"> ... </div>
+
+    (id/class unchanged, so setSaveStatus() needs no edits. The existing
+     .sc-save-status CSS, incl. its border-bottom, now lives at the top
+     of the composer.)
+
+B5. Auto-collapse the side panel on small screens at boot, right after
+    switchToAgent():
+
+       /* Smaller screens default to the side panel collapsed so the chat gets
+          the full column width; the header toggle still opens it. Large screens
+          open the panel by default. */
+       if (
+           window.matchMedia("(max-width: 900px)").matches &&
+           !DOM.panel.classList.contains("hidden")
+       ) {
+           DOM.panel.classList.add("hidden");
+       }
+       syncPanelToggle();
+
+    The header panel-toggle still opens/closes it manually at any size.
+
+B6. FORWARD PICKER polish. The picker now lists every agent EXCEPT the
+    one currently being chatted with, sorted by name, labelled
+    "Name - description", and one-line-ellipsised:
+
+       const agents = Array
+           .from(agentsById.values())
+           .filter(agent => agent.id !== activeAgent?.id)
+           .sort((a, b) =>
+               String(a.name || "").localeCompare(String(b.name || ""))
+           );
+
+       /* item label */
+       `${agent.name}${agent.description ? " - " + agent.description : ""}`
+
+    CSS:
+       .sc-forward-picker-item {
+           max-width: 260px;
+           overflow: hidden;
+           white-space: nowrap;
+           text-overflow: ellipsis;
+       }
+
+=================================================================
+ 7. FILE: server.py                           (CHANGED - STARTED ROUND)
+=================================================================
+STARTED ROUND (uncommitted vs. v1-3). Added one endpoint that this round
+uses during development and that the chat page ships anyway:
+
+    @app.delete("/api/chats/{chat_id}")
+    async def delete_chat(chat_id: str):
+        """Permanently erase a chat: its .txt transcript(s) + log records (+ the
+        active session when that is the chat being deleted)."""
+        result = chat_store.delete_chat(chat_id)
+        if not result["recordsRemoved"] and not result["filesRemoved"] and not result["wasActive"]:
+            raise HTTPException(status_code=404, detail=f"Chat '{chat_id}' not found")
+        return {"deleted": True, "id": chat_id, **result}
+
+No other server.py route changed this round. /api/settings still merges
+partial POSTs, which is what lets the config form and the Chat Tests
+panel coexist in app_settings.json.
+
+=================================================================
+ 8. FILE: app/chat_store/store.py             (CHANGED - STARTED ROUND)
+=================================================================
+STARTED ROUND (uncommitted vs. v1-3). Added the backing function for the
+DELETE endpoint (added to __all__ as well). It defends against the
+import-on-boot re-scan: transcripts must be unlinked, not just de-logged.
+
+    def delete_chat(chat_id: str) -> dict:
+        """Erase a chat completely: its log records, EVERY versioned .txt transcript,
+        and the live active session when it is the one being deleted.
+
+        The records alone are not enough - import_once() rescans the transcript
+        folder on boot, so the .txt files must be unlinked too or the chat would
+        come back. Returns a summary dict, or an all-zero dict when the id is
+        unknown (callers decide whether that is an error).
+        """
+        with _lock:
+            records = _metadata_logger.list_all()
+            mine = [record for record in records if record.get("id") == chat_id]
+
+            files_removed = []
+            for record in mine:
+                file_name = record.get("fileName", "")
+                if not file_name:
+                    continue
+                path = _resolve_transcript(file_name)
+                try:
+                    if path.exists():
+                        path.unlink()
+                        files_removed.append(file_name)
+                except OSError:
+                    continue
+
+            records_removed = _metadata_logger.remove(chat_id)
+
+            was_active = False
+            active = _load_json(ACTIVE_SESSION_FILE, None)
+            if active and active.get("id") == chat_id:
+                was_active = True
+                try:
+                    ACTIVE_SESSION_FILE.unlink()
+                except OSError:
+                    pass
+
+            if records_removed or files_removed or was_active:
+                print(
+                    f"[CHATS] deleted '{chat_id}' "
+                    f"({len(files_removed)} file(s), {records_removed} record(s), active={was_active})"
+                )
+            return {
+                "recordsRemoved": records_removed,
+                "filesRemoved": files_removed,
+                "wasActive": was_active,
+            }
+
+No other store.py behavior changed this round.
+
+=================================================================
+ 9. FILES CHANGED THIS ROUND (RECAP)
+=================================================================
+   static/js/ui/chat-tests.js        (new/written this round)
+   static/js/ui/config.js            (import + mount + heading fix)
+   static/css/styles.css             (config-heading + toolbar + hovers)
+   static/chat.html                  (test engine removal, layout,
+                                      forward-picker polish)
+
+=================================================================
+ 10. FILES ALREADY IN THE WORKING TREE WHEN THIS ROUND STARTED
+=================================================================
+   static/chat.html                  (chip rewrite + bubble actions)
+   server.py                         (DELETE /api/chats/{id})
+   app/chat_store/store.py           (delete_chat)
+   static/config/app_settings.json   (chatTests.enabled + 3 tests:
+                                      auto-hi, factorial-tool,
+                                      custom-mtnm0c1g-6w9y - all global)
+   data/chatlog/chatRecord.jsonl     (records for on-disk transcript
+                                      versions; unchanged semantics)
+   (untracked data/)                 (agent-text-records/*.txt transcripts)
+   notes.txt                         (deleted, not file-tracking related)
+
+=================================================================
+ 11. FILES NOT CHANGED (verified)
+=================================================================
+   static/index.html                 (hub page; section is JS-rendered)
+   static/js/app.js                  (unchanged)
+   static/js/api/api.js              (unchanged; sendChat already
+                                      returned session_id/reply/title)
+   static/js/ui/config-form.js       (unchanged, incl. chatTests.enabled)
+   static/js/ui/markdown.js          (unchanged)
+   static/css/sc-styles.css etc.     (no other CSS files exist)
+   app/core/, app/agents/, app/tools/ (whole backend except the store.py
+                                      delete_chat addition)
+   requirements.txt
+
+=================================================================
+ 12. VERIFICATION PERFORMED THIS ROUND
+=================================================================
+   - Extracted chat.html's inline <script> and ran `node --check`
+     => syntax OK.
+   - `node --check` on chat-tests.js / config.js / api.js as ES modules
+     => OK.
+   - Booted the server (PORT=8011) and verified:
+       GET  /               200 (index.html)
+       GET  /static/chat.html 200
+       GET  /api/settings   200 (chatTests.enabled=true, 3 tests)
+       GET  /api/agents     200 (basic_chat, dev_assistant,
+                                 problem_discovery_agent)
+       POST /api/settings   identity merge 200 (tests preserved)
+       POST /api/chat       turn1 new_chat=true  -> returned session_id
+       POST /api/chat       turn2 reuses session_id -> same session id
+                            (the exact flow the inline runner uses)
+       DELETE /api/chats/<id> 200 {"deleted":true,...} (smoke chat cleaned)
+   - grep: no leftover refs to the removed chat.html test engine.
+
+=================================================================
+ 13. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_enchilada_v1-4.txt`. It is an "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline (the_entire_enchilada_v1-3.txt). It is NOT a full source dump;
+it describes each changed file, the exact deltas, and the new/added
+code, plus an explicit list of files that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, `static/`, and the backend under
+   `app/`) against the versions/descriptions captured in
+   `the_entire_enchilada_v1-4.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_enchilada_v1-5.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).

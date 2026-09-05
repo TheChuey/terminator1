@@ -1,4 +1,4 @@
-# AI Agent Laboratory
+# Terminator1
 
 A local lab for building and testing AI agents: **FastAPI** backend + vanilla JS
 frontend + **Ollama** local LLMs.

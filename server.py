@@ -237,6 +237,16 @@ async def end_chat(payload: dict = None):
     return {"finalized": True, "saved": True, "file": row["fileName"], "id": row["id"], "version": row["version"]}
 
 
+@app.delete("/api/chats/{chat_id}")
+async def delete_chat(chat_id: str):
+    """Permanently erase a chat: its .txt transcript(s) + log records (+ the
+    active session when that is the chat being deleted)."""
+    result = chat_store.delete_chat(chat_id)
+    if not result["recordsRemoved"] and not result["filesRemoved"] and not result["wasActive"]:
+        raise HTTPException(status_code=404, detail=f"Chat '{chat_id}' not found")
+    return {"deleted": True, "id": chat_id, **result}
+
+
 # --- DISCUSSIONS (data/chatlog/chatRecord.jsonl - the chat log) ---
 
 @app.get("/api/discussions")

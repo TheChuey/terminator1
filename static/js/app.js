@@ -20,6 +20,7 @@
 
 import { renderAgents } from "./ui/agents.js";
 import { renderConfig } from "./ui/config.js";
+import { applyAppearance } from "./ui/appearance.js";
 import { ChatSession } from "./classes/ChatSession.js";
 import { ChatFactory } from "./classes/chat-window.js";
 import { renderMarkdown } from "./ui/markdown.js";
@@ -41,6 +42,15 @@ const AUTO_HI_DEFAULT = true;  // default state of the auto-hi toggle
 
 // ---- boot ----
 async function boot() {
+    // 0. Cache server settings and apply the stored appearance (font + size)
+    //    to THIS page right away - chat.html applies its own copy on load.
+    try {
+        settings = await api.loadAppSettings();
+    } catch (_) {
+        settings = {};
+    }
+    applyAppearance(settings);
+
     // 1. Render agent cards (returns the full agent list).
     agents = await renderAgents({
         containerId: "agent-cards",

@@ -1,0 +1,296 @@
+=================================================================
+ the_entire_enchilada_v1-6.txt
+ UPDATES SINCE: the_entire_enchilada_v1-5.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1.5)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_enchilada_v1-5.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the exact
+deltas, and any new code that was added. Files that did NOT change are
+listed at the end so it is clear nothing was missed.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+A full visual "face lift" of BOTH user-facing pages plus a real dark
+theme, per the user's choices (light + dark toggle, full component
+refresh, green/teal accent over the blue base):
+
+  - THEME SYSTEM. Appearance now stores light / dark / system ("system"
+    follows the OS via prefers-color-scheme). Both pages set
+    data-theme on <html>; every component reads the palette through
+    CSS variables, and each page has a [data-theme="dark"] override
+    block, so the entire UI re-skins without any markup-level changes.
+  - APPEARANCE SECTION grows a "Theme" select (Light / Dark / System),
+    with live preview on change; saved to the existing merging
+    POST /api/settings. localStorage caches the theme for pre-paint
+    application to avoid a light-flash for dark users.
+  - PALETTE. New token set: blue base (#0b6bcb) with a branded
+    green/teal accent (#0d9488 / #2dd4bf in dark) used for highlights,
+    active states, chat agent avatars and gradients. Larger radii
+    (small 6 / medium 10 / large 16 / pill) and soft layered shadows.
+  - COMPONENTS. Index gets a gradient hero header, card monogram
+    avatars with hover lift + teal accent edge, gradient buttons,
+    teal focus rings, pill status dots, section-heading accent tiles,
+    themed scrollbars. chat.html gets a gradient top bar, welcome
+    hint chips, teal/soft user bubbles, accent agent bubbles with
+    gradient avatars, a pill gradient composer + gradient Send button,
+    and an accent-tinted right panel.
+
+=================================================================
+ 2. FILE: static/js/ui/appearance.js           (CHANGED - THIS ROUND)
+=================================================================
+  - NEW exports / behaviour:
+      applyTheme(theme) sets document.documentElement.dataset.theme to
+      "light"|"dark" (resolving "system" through a
+      "(prefers-color-scheme: dark)" matchMedia) and installs a one-time
+      change listener that keeps following the OS while the stored theme
+      is "system" (module-level currentTheme).
+      applyAppearance(appearance) now also applies the theme:
+          const theme = (appearance && appearance.theme) || "system";
+          applyTheme(theme);
+  - NEW THEME_OPTIONS     = system / light / dark.
+  - renderAppearance():
+      - A new "Theme" <select id="appearance-theme"> is rendered ABOVE
+        the existing font controls; change fires applyTheme(value) as a
+        live preview (no save).
+      - The Save payload now includes theme: themeSelect.value.
+      - After a successful save, localStorage.setItem("appearance-theme",
+        theme) is written (wrapped in try/catch for private mode).
+      - The intro copy now mentions "theme + typography".
+  - values() now also returns theme.
+  - The rest (font/size select + preview + status styling) is unchanged.
+
+=================================================================
+ 3. FILE: static/config/app_settings.json      (CHANGED - THIS ROUND)
+=================================================================
+The appearance key now carries a theme field (seeded to "system"):
+
+    "appearance": {
+        "theme": "system",
+        "fontFamily": "",
+        "fontSize": 0
+    },
+
+The saved chat test (custom-mtnwyh6t-krgy, scoped to dev_assistant,
+3 steps) is untouched.
+
+=================================================================
+ 4. FILE: static/index.html                    (CHANGED - THIS ROUND)
+=================================================================
+Only one addition: a pre-paint theme script in <head> before the
+stylesheet link:
+
+    <script>
+        (function () {
+            var s = "system";
+            try { s = localStorage.getItem("appearance-theme") || "system"; } catch (e) {}
+            var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+            document.documentElement.dataset.theme =
+                s === "dark" || s === "light" ? s : (dark ? "dark" : "light");
+        })();
+    </script>
+
+It flips data-theme before CSS applies so dark users don't see a light
+flash; app.js re-applies the authoritative server settings on boot.
+
+=================================================================
+ 5. FILE: static/js/ui/agents.js               (CHANGED - THIS ROUND)
+=================================================================
+Agent cards now open with a monogram avatar chip:
+  - NEW helper monogram(name): one word -> first 2 letters; else the
+    first letter of the first and last words; uppercase; "?" if empty.
+  - buildCard() inserts, before the <h3>:
+        const avatar = document.createElement("div");
+        avatar.className = "card-avatar";
+        avatar.textContent = monogram(agent.name || "?");
+  Everything else in the card (badge, description, Chat button ->
+  window.open("/static/chat.html?agent=...")) is unchanged.
+
+=================================================================
+ 6. FILE: static/css/styles.css                (HEAVILY CHANGED)
+=================================================================
+6.1  :root token overhaul + DARK THEME block.
+     - Old tokens replaced with the new palette (blue base, teal accent):
+       --color-primary #0b6bcb, --color-primary-dark #0a5cb3,
+       NEW --color-primary-soft, --color-accent #0d9488,
+       NEW --color-accent-strong #0f766e, --color-accent-soft #d9f2ef,
+       NEW --color-danger-soft #fdecec, --color-warning,
+       NEW --color-focus-ring rgba(13,148,136,.18);
+       neutrals: background #f5f7fb, surface #fff, alt #f3f6fa,
+       NEW --color-surface-hover #eef2f8, text #0f172a/#334155/
+       #64748b/#94a3b8, borders #e2e8f0/#cbd5e1.
+     - NEW component tokens: --color-user-bubble-bg/-border, --color-code-bg,
+       --color-pre-bg/-text, --color-input-bg, --color-avatar/-text,
+       --color-online, --color-header-grad-a/b.
+     - Radii up: small 6px, medium 10px, large 16px, NEW pill 999px.
+     - NEW layered shadows: --shadow-soft/-panel/-card/-pop/-modal.
+     - NEW [data-theme="dark"] block overriding the same token names:
+       bg #0d1117, surface #151c25, alt #1a222d, hover #202a37,
+       borders #242e3b/#33404f, text #e6edf3/#c3cdd8/#8b98a9/#5b6b7d,
+       primary #3b82f6 (brighter for dark), accent #2dd4bf, accent-soft
+       rgba(45,212,191,.14), danger #f87171, user bubble #0f2f2b/#1d4942,
+       input bg #0f151e, header gradient #1d4ed8 -> #0f766e.
+     - NEW themed scrollbars (both themes) on ::-webkit-scrollbar*.
+
+6.2  Component refreshes (all token-driven):
+     - .main: layered radial-gradient wash over var(--color-background).
+     - .page-header: becomes a CSS-only hero - overflow hidden, radius
+       large, background linear-gradient(120deg, --color-header-grad-a,
+       b), white title/subtitle with text-shadow, decorative ::before
+       radial glow blob, responsive clamp padding.
+     - .card: position relative, shadow-card, hover lift (-3px) +
+       shadow-pop + border-strong, ::after top accent line (teal
+       gradient) fading in on hover. NEW .card-avatar chip (44px, radius
+       12, gradient accent->primary, white monogram).
+     - Buttons: .btn gets transition; .btn-primary = gradient
+       a->b + blue glow shadow + hover brightness/lift; .btn-secondary
+       border/fill from tokens with accent hover; .btn-danger uses
+       danger-soft fill/border + danger text on hover (theme safe).
+     - Fields: background var(--color-input-bg); focus = accent border +
+       0 0 0 3px var(--color-focus-ring).
+     - Toggle: checked track uses --color-accent.
+     - .badge: pill radius, accent-soft bg + accent-strong text.
+     - .status-message: flex row with an 8px currentColor ::before dot.
+     - .empty-state: uses tokens (radius up). .readout pre/code and the
+       bare `code` rule now use --color-pre-bg/--color-pre-text/
+       --color-code-bg.
+     - #config-section .config-section-heading: flex row with an 18px
+       gradient accent ::before tile, spacing/padding tuned.
+     - .chat-popup: radius large + shadow-pop. .chat-header: gradient
+       band, white text, translucent action buttons (danger hover
+       #fee2e2). .bubble.user body = user-bubble tokens (+border);
+       .avatar / .avatar.agent-avatar = avatar tokens / teal gradient;
+       .typing dots use --color-accent; #chat-message-input bg + accent
+       focus ring.
+
+6.3  SECTION 8 (chat-window engine): token + component refresh.
+     - --cw-user-bg now = var(--color-user-bubble-bg); --cw-accent =
+       var(--color-accent).
+     - .chat-window radius large + shadow-pop; .cw-window-header =
+       gradient band with white content; .cw-window-avatar translucent
+       white disc; .cw-window-info strong white / small white-78;
+       .cw-icon-btn white-85, hover white/20 (close hover #fee2e2).
+     - .cw-bubble.cw-user body gains user-bubble border; agent accent
+       stays teal through --cw-accent; .cw-bubble-avatar / agent avatar
+       = avatar tokens / teal gradient; .cw-typing dots accent.
+     - .cw-input, .cw-field input/select, .cw-agent-select: bg
+       var(--color-input-bg), accent focus ring. .cw-switch checked =
+       accent. .chat-window-launcher + .cw-widget-launcher: shadow-pop,
+       gradient header token pair. .cw-widget border-radius large.
+     - .cw-welcome max-width 340px (cosmetic).
+     - .cw-panel-drag:hover uses --color-focus-ring (was hardcoded blue).
+
+=================================================================
+ 7. FILE: static/chat.html                     (HEAVILY CHANGED)
+=================================================================
+7.1  Head: NEW pre-paint theme <script> (mirrors index.html) inserted
+     right after <title>; the big app script is now the SECOND <script>.
+
+7.2  :root mirror + DARK THEME block (in the <style>): the local token
+     block now matches styles.css 1:1 (same new palette, radii, shadows,
+     component tokens, NEW --color-accent/-strong/-soft, focus-ring,
+     user-bubble, code/pre, input-bg, avatars, header-gradients) plus a
+     [data-theme="dark"] override block and themed scrollbars.
+
+7.3  Typography/hardcoded fixes:
+     - body font-size changed from var(--app-font-size, 15px) (odd
+       15px offset) to 1rem so rem scaling matches the index page.
+     - .sc-header background now the gradient band (was --color-sidebar).
+     - .sc-welcome-icon: gradient accent->primary tile.
+     - .sc-message-avatar: var(--color-avatar)/text; .agent variant =
+       teal gradient. .sc-message.user/.agent bubble fills now use
+       --color-user-bubble-* and teal border-left --color-accent.
+     - .sc-message-body code/pre use --color-code-bg / --color-pre-bg/
+       pre-text. .sc-typing dots accent. All focus-visible outlines
+       (4 sites) now var(--color-focus-ring).
+     - .sc-composer: bg var(--color-surface-alt) + soft top shadow.
+       .sc-input-wrap: bg var(--color-input-bg), radius medium, accent
+       glow on focus-within. .sc-send: pill radius + gradient + glow.
+     - .sc-btn-primary gradient + glow; .sc-btn-secondary bg
+       var(--color-input-bg), accent hover. .sc-field-input focus accent.
+       .sc-switch-track uses --color-border-strong (checked = accent).
+     - .sc-test-run-banner: bg --color-accent-soft, border
+       user-bubble-border, strong text accent-strong (was teal-on-white
+       hazard after the accent meaning change).
+     - .sc-panel-section-head: NEW teal 7px ::before dot marker.
+     - .sc-bubble-btn hover/active: accent-soft fill / accent border and
+       accent-strong text instead of primary/accent variants.
+
+7.4  Welcome screen: NEW static feature-hint chips row rendered by
+     renderWelcome() after the description:
+         <div class="sc-welcome-hints">
+            <span class="sc-welcome-hint">Markdown rendered</span>
+            <span class="sc-welcome-hint">Per-agent sessions</span>
+            <span class="sc-welcome-hint">Transcripts saved</span>
+         </div>
+     with NEW .sc-welcome-hints (flex wrap, gap 8, margin-top 18) and
+     .sc-welcome-hint (pill, accent-soft bg, accent-strong text) rules.
+
+7.5  Appearance application (section 17b):
+     - NEW module-level scCurrentTheme + scSystemListenerAttached.
+     - NEW applyThemeToPage(theme): mirrors appearance.js applyTheme -
+       sets data-theme, resolves "system" via prefers-color-scheme,
+       attaches a one-time change listener that re-runs while the stored
+       theme is "system".
+     - applyAppearance(appearance) now reads theme (default "system")
+       and calls applyThemeToPage(theme) alongside font/size.
+     - boot() comment updated; the existing applyAppearance(settings)
+       call (after the /api/settings fetch) is unchanged.
+
+=================================================================
+ 8. VERIFICATION PERFORMED THIS ROUND
+=================================================================
+   - node --check on the extracted chat.html head script AND its main
+     inline app script (now the last <script> block) => both PASS.
+   - node --check (as ES modules) on appearance.js, agents.js, config.js,
+     app.js, chat-tests.js => PASS.
+   - node --check on index.html's single inline (head) script => PASS.
+   - Booted the server and verified:
+       GET /                               200
+       GET /static/chat.html?agent=dev_assistant&runTests=1   200
+       POST /api/settings appearance={theme:"dark",Verdana,17}
+           -> theme/font/size saved; the single chatTest PRESERVED
+       POST /api/settings appearance={theme:"system","",0}
+           -> reset to defaults
+   - app_settings.json left at defaults (theme "system") after testing.
+   - Final visual check is a browser-side eyeball (user).
+
+=================================================================
+ 9. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_enchilada_v1-6.txt`. It is an "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline (the_entire_enchilada_v1-5.txt). It is NOT a full source dump;
+it describes each changed file, the exact deltas, and the new/added
+code, plus an explicit list of files that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, `static/`, and the backend under
+   `app/`) against the versions/descriptions captured in
+   `the_entire_enchilada_v1-6.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_enchilada_v1-7.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).

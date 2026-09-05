@@ -27,42 +27,136 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Agent Chat</title>
+<title>Terminator1</title>
+
+<!-- Pre-paint theme so dark-mode users never see a light flash. The real
+     appearance settings are applied by applyAppearance() after the
+     /api/settings fetch; saved values update localStorage on every save. -->
+<script>
+    (function () {
+        var s = "system";
+        try { s = localStorage.getItem("appearance-theme") || "system"; } catch (e) {}
+        var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme =
+            s === "dark" || s === "light" ? s : (dark ? "dark" : "light");
+    })();
+</script>
 
 <style>
 /* Design tokens below mirror the main app's styles.css :root. */
 
 :root {
-    --color-primary: #075985;
-    --color-primary-dark: #064e78;
+    /* Colors */
+    --color-primary: #0b6bcb;
+    --color-primary-dark: #0a5cb3;
+    --color-primary-soft: #e7f1fb;
     --color-sidebar: #064f86;
 
-    --color-background: #f5f7f9;
+    --color-background: #f5f7fb;
     --color-surface: #ffffff;
-    --color-surface-alt: #fafafa;
+    --color-surface-alt: #f3f6fa;
+    --color-surface-hover: #eef2f8;
 
-    --color-text: #263238;
-    --color-text-soft: #374151;
+    --color-text: #0f172a;
+    --color-text-soft: #334155;
     --color-text-muted: #64748b;
     --color-text-faint: #94a3b8;
 
-    --color-border: #e1e5e8;
+    --color-border: #e2e8f0;
     --color-border-strong: #cbd5e1;
 
-    --color-accent: #dbeafe;
-    --color-success: #16803c;
+    /* Branded green/teal accent (light values) */
+    --color-accent: #0d9488;
+    --color-accent-strong: #0f766e;
+    --color-accent-soft: #d9f2ef;
     --color-danger: #b91c1c;
+    --color-danger-soft: #fdecec;
+    --color-success: #16803c;
+    --color-warning: #b45309;
+    --color-focus-ring: rgba(13, 148, 136, 0.18);
+    --color-online: #2dd4a7;
+
+    /* Component colors (theme-aware) */
+    --color-user-bubble-bg: #e7f6f3;
+    --color-user-bubble-border: #c9eae4;
+    --color-code-bg: #f1f5f9;
+    --color-pre-bg: #0f172a;
+    --color-pre-text: #e2e8f0;
+    --color-input-bg: #ffffff;
+    --color-avatar: #e5e7eb;
+    --color-avatar-text: #374151;
+    --color-header-grad-a: #0b6bcb;
+    --color-header-grad-b: #0d9488;
 
     --radius-small: 6px;
     --radius-medium: 10px;
-    --radius-large: 14px;
+    --radius-large: 16px;
+    --radius-pill: 999px;
 
-    --shadow-soft: 0 1px 3px rgba(15,23,42,.08);
-    --shadow-card: 0 4px 16px rgba(15,23,42,.06);
+    --shadow-soft: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+    --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.07);
+    --shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.12);
 
     --header-height: 60px;
     --panel-width: 310px;
-    --content-width: 920px;
+    --content-width: 1020px;
+
+    /* Appearance - overridable from the Configuration page (appearance
+       settings in app_settings.json) via applyAppearance(). */
+    --app-font-family: Arial, Helvetica, sans-serif;
+    --app-font-size: 16px;
+}
+
+/* DARK THEME - flipped by applyAppearance() (or the pre-paint head
+   script) setting data-theme="dark" on <html>; same token names as the
+   main app's styles.css so the whole component sheet re-skins. */
+[data-theme="dark"] {
+    --color-primary: #3b82f6;
+    --color-primary-dark: #2f6fe0;
+    --color-primary-soft: rgba(59, 130, 246, 0.14);
+    --color-sidebar: #0d1117;
+    --color-background: #0d1117;
+    --color-surface: #151c25;
+    --color-surface-alt: #1a222d;
+    --color-surface-hover: #202a37;
+    --color-text: #e6edf3;
+    --color-text-soft: #c3cdd8;
+    --color-text-muted: #8b98a9;
+    --color-text-faint: #5b6b7d;
+    --color-border: #242e3b;
+    --color-border-strong: #33404f;
+    --color-accent: #2dd4bf;
+    --color-accent-strong: #5eead4;
+    --color-accent-soft: rgba(45, 212, 191, 0.14);
+    --color-danger: #f87171;
+    --color-danger-soft: rgba(248, 113, 113, 0.12);
+    --color-success: #34d399;
+    --color-warning: #fbbf24;
+    --color-focus-ring: rgba(45, 212, 191, 0.25);
+    --color-user-bubble-bg: #0f2f2b;
+    --color-user-bubble-border: #1d4942;
+    --color-code-bg: #1e293b;
+    --color-pre-bg: #0b1220;
+    --color-input-bg: #0f151e;
+    --color-avatar: #27303c;
+    --color-avatar-text: #c3cdd8;
+    --color-header-grad-a: #1d4ed8;
+    --color-header-grad-b: #0f766e;
+}
+
+/* Themed scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-faint);
+    border: 2px solid transparent;
+    background-clip: content-box;
 }
 
 /* -------------------- RESET -------------------- */
@@ -78,11 +172,17 @@ body {
     margin: 0;
 }
 
+html {
+    /* rem-based typography scales from here (= the stored Appearance size) */
+    font-size: var(--app-font-size, 16px);
+}
+
 body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: var(--app-font-family, Arial, Helvetica, sans-serif);
+    font-size: 1rem;
     color: var(--color-text);
     background: var(--color-background);
 }
@@ -96,7 +196,7 @@ body {
     flex: 0 0 var(--header-height);
     height: var(--header-height);
     padding: 0 18px;
-    background: var(--color-sidebar);
+    background: linear-gradient(135deg, var(--color-header-grad-a), var(--color-header-grad-b));
     color: white;
     box-shadow: 0 1px 4px rgba(0,0,0,.12);
     z-index: 10;
@@ -125,7 +225,7 @@ body {
 
 .sc-agent-name {
     overflow: hidden;
-    font-size: 15px;
+    font-size: 0.9375rem;
     font-weight: 700;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -169,7 +269,7 @@ body {
 .sc-header-btn:focus-visible,
 .sc-btn:focus-visible,
 .sc-input:focus-visible {
-    outline: 2px solid rgba(7,89,133,.35);
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
 }
 
@@ -186,8 +286,37 @@ body {
 }
 
 .sc-header-select option {
-    color: var(--color-text);
-    background: white;
+    color: var(--color-text-soft);
+    background: var(--color-surface);
+}
+
+.sc-header-title {
+    width: 170px;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: var(--radius-small);
+    background: rgba(255,255,255,.10);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sc-header-title::placeholder {
+    color: rgba(255,255,255,.50);
+    font-weight: 500;
+}
+
+.sc-header-title:focus {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    background: rgba(255,255,255,.18);
+}
+
+.sc-header-title:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
 }
 
 .sc-header-btn.danger:hover {
@@ -249,22 +378,40 @@ body {
     height: 52px;
     margin: 0 auto 14px;
     border-radius: 14px;
-    background: var(--color-primary);
+    background: linear-gradient(135deg, var(--color-accent), var(--color-primary));
     color: white;
-    font-size: 16px;
+    font-size: 1rem;
     font-weight: 700;
 }
 
 .sc-welcome h2 {
     margin: 0 0 8px;
-    font-size: 21px;
+    font-size: 1.3125rem;
     color: var(--color-text);
+}
+
+.sc-welcome-hints {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.sc-welcome-hint {
+    padding: 5px 11px;
+    border: 1px solid var(--color-user-bubble-border);
+    border-radius: var(--radius-pill);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+    font-size: 0.75rem;
+    font-weight: 600;
 }
 
 .sc-welcome p {
     margin: 5px 0;
     color: var(--color-text-muted);
-    font-size: 14px;
+    font-size: 0.875rem;
     line-height: 1.6;
 }
 
@@ -288,14 +435,14 @@ body {
     flex: 0 0 32px;
     margin-top: 23px;
     border-radius: 9px;
-    background: #e5e7eb;
-    color: var(--color-text-soft);
+    background: var(--color-avatar);
+    color: var(--color-avatar-text);
     font-size: 11px;
     font-weight: 700;
 }
 
 .sc-message-avatar.agent {
-    background: var(--color-primary);
+    background: linear-gradient(135deg, var(--color-accent), var(--color-primary));
     color: white;
 }
 
@@ -317,12 +464,12 @@ body {
 }
 
 .sc-message-meta strong {
-    font-size: 12px;
+    font-size: 0.75rem;
 }
 
 .sc-message-meta span {
     color: var(--color-text-faint);
-    font-size: 11px;
+    font-size: 0.6875rem;
 }
 
 .sc-message-body {
@@ -331,17 +478,17 @@ body {
     border-radius: var(--radius-medium);
     background: var(--color-surface);
     box-shadow: var(--shadow-soft);
-    font-size: 14px;
+    font-size: 0.875rem;
     line-height: 1.6;
 }
 
 .sc-message.user .sc-message-body {
-    border-color: #c9def0;
-    background: #eaf3fc;
+    border: 1px solid var(--color-user-bubble-border);
+    background: var(--color-user-bubble-bg);
 }
 
 .sc-message.agent .sc-message-body {
-    border-left: 3px solid var(--color-primary);
+    border-left: 3px solid var(--color-accent);
 }
 
 .sc-message.system {
@@ -354,7 +501,7 @@ body {
     background: transparent;
     box-shadow: none;
     color: var(--color-text-muted);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-style: italic;
     text-align: center;
 }
@@ -382,7 +529,7 @@ body {
 .sc-message-body code {
     padding: 2px 5px;
     border-radius: 4px;
-    background: #eef2f7;
+    background: var(--color-code-bg);
     font-family: Consolas, monospace;
     font-size: 12px;
 }
@@ -392,8 +539,8 @@ body {
     padding: 13px;
     overflow-x: auto;
     border-radius: 8px;
-    background: #17202a;
-    color: #f8fafc;
+    background: var(--color-pre-bg);
+    color: var(--color-pre-text);
     font-family: Consolas, monospace;
     font-size: 12px;
     line-height: 1.5;
@@ -422,7 +569,7 @@ body {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--color-text-faint);
+    background: var(--color-accent);
     animation: typingPulse 1.2s infinite ease-in-out;
 }
 
@@ -445,7 +592,8 @@ body {
     flex: 0 0 auto;
     padding: 13px 20px 16px;
     border-top: 1px solid var(--color-border);
-    background: rgba(250,250,250,.96);
+    background: var(--color-surface-alt);
+    box-shadow: 0 -4px 16px rgba(16, 24, 40, 0.04);
 }
 
 .sc-composer-inner {
@@ -472,21 +620,69 @@ body {
     color: var(--color-danger);
 }
 
+/* Saved-test run banner (rendered inside the message thread, ?runTests=1). */
+.sc-test-run-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 4px 0 10px;
+    padding: 9px 14px;
+    border: 1px solid var(--color-user-bubble-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-accent-soft);
+    color: var(--color-text-soft);
+    font-size: 13px;
+}
+
+.sc-test-run-banner strong {
+    color: var(--color-accent-strong);
+}
+
+.sc-test-run-banner span {
+    min-width: 40px;
+    font-weight: 700;
+    color: var(--color-text-muted);
+}
+
+.sc-test-run-stop {
+    margin-left: auto;
+    padding: 4px 12px;
+    border: 1px solid var(--color-danger);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--color-danger);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sc-test-run-stop:disabled {
+    opacity: .55;
+    cursor: default;
+}
+
+.sc-test-run-stop:not(:disabled):hover {
+    background: var(--color-danger);
+    color: #fff;
+}
+
 .sc-input-wrap {
     display: flex;
     align-items: flex-end;
     gap: 8px;
     padding: 7px;
     border: 1px solid var(--color-border-strong);
-    border-radius: 12px;
-    background: white;
-    box-shadow: 0 2px 8px rgba(15,23,42,.05);
+    border-radius: var(--radius-medium);
+    background: var(--color-input-bg);
+    box-shadow: var(--shadow-soft);
     transition: .15s ease;
 }
 
 .sc-input-wrap:focus-within {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px rgba(7,89,133,.08);
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .sc-input {
@@ -501,7 +697,7 @@ body {
     background: transparent;
     color: var(--color-text);
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
     line-height: 1.5;
 }
 
@@ -512,6 +708,14 @@ body {
 .sc-send {
     min-width: 74px;
     height: 40px;
+    border-radius: var(--radius-pill);
+    background: linear-gradient(135deg, var(--color-header-grad-a), var(--color-header-grad-b));
+    box-shadow: 0 2px 8px rgba(11, 107, 203, 0.25);
+}
+
+.sc-send:hover:not(:disabled) {
+    filter: brightness(1.06);
+    box-shadow: 0 4px 14px rgba(11, 107, 203, 0.32);
 }
 
 .sc-composer-footer {
@@ -533,7 +737,7 @@ body {
     border-radius: var(--radius-small);
     padding: 8px 13px;
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
     cursor: pointer;
     transition: .15s ease;
@@ -545,23 +749,24 @@ body {
 }
 
 .sc-btn-primary {
-    background: var(--color-primary);
+    background: linear-gradient(135deg, var(--color-header-grad-a), var(--color-header-grad-b));
     color: white;
+    box-shadow: 0 2px 8px rgba(11, 107, 203, 0.25);
 }
 
 .sc-btn-primary:hover:not(:disabled) {
-    background: var(--color-primary-dark);
+    filter: brightness(1.06);
 }
 
 .sc-btn-secondary {
     border-color: var(--color-border-strong);
-    background: white;
+    background: var(--color-input-bg);
     color: var(--color-text-soft);
 }
 
 .sc-btn-secondary:hover:not(:disabled) {
-    border-color: var(--color-primary);
-    color: var(--color-primary);
+    border-color: var(--color-accent);
+    color: var(--color-accent-strong);
 }
 
 /* -------------------- RIGHT PANEL -------------------- */
@@ -585,13 +790,13 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 48px;
-    padding: 0 16px;
+    min-height: 40px;
+    padding: 0 14px;
     border-bottom: 1px solid var(--color-border);
 }
 
 .sc-panel-title {
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: .5px;
     text-transform: uppercase;
@@ -624,6 +829,15 @@ body {
     font-weight: 700;
     letter-spacing: .5px;
     text-transform: uppercase;
+}
+
+.sc-panel-section-head::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border-radius: 50%;
+    background: var(--color-accent);
 }
 
 .sc-field {
@@ -663,8 +877,8 @@ body {
 }
 
 .sc-field-input:focus {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px rgba(7,89,133,.08);
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .sc-empty-note {
@@ -705,7 +919,7 @@ body {
     position: absolute;
     inset: 0;
     border-radius: 999px;
-    background: #cbd5e1;
+    background: var(--color-border-strong);
     transition: background .15s ease;
     pointer-events: none;
 }
@@ -724,7 +938,7 @@ body {
 }
 
 .sc-switch input:checked + .sc-switch-track {
-    background: var(--color-primary);
+    background: var(--color-accent);
 }
 
 .sc-switch input:checked + .sc-switch-track::after {
@@ -750,6 +964,136 @@ body {
 .sc-panel-sections::-webkit-scrollbar-track,
 .sc-input::-webkit-scrollbar-track {
     background: transparent;
+}
+
+/* -------------------- BUBBLE ACTION BUTTONS -------------------- */
+
+/* Wrapper positioned at bottom-right corner of each message body. */
+.sc-bubble-actions {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    position: absolute;
+    bottom: 6px;
+    right: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease;
+}
+
+/* Make the message-body position relative so the actions row anchors. */
+.sc-message-body {
+    position: relative;
+}
+
+/* Reveal on hover of the whole message or when a button inside is focused. */
+.sc-message:hover .sc-bubble-actions,
+.sc-message:focus-within .sc-bubble-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sc-bubble-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 5px;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    transition: .12s ease;
+    box-shadow: var(--shadow-soft);
+}
+
+.sc-bubble-btn:hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+}
+
+.sc-bubble-btn:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+}
+
+.sc-bubble-btn.active {
+    border-color: var(--color-accent);
+    background: var(--color-primary);
+    color: white;
+}
+
+/* Toast notification for "coming soon" bookmark etc. */
+.sc-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    padding: 9px 18px;
+    border-radius: 20px;
+    background: #1e293b;
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 999;
+    transition: opacity .2s ease, transform .2s ease;
+}
+
+.sc-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* Forward-to-agent picker overlay */
+.sc-forward-picker {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    right: 0;
+    min-width: 180px;
+    padding: 7px 0;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface);
+    box-shadow: 0 6px 20px rgba(15,23,42,.14);
+    z-index: 50;
+}
+
+.sc-forward-picker-title {
+    padding: 4px 12px 6px;
+    color: var(--color-text-faint);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.sc-forward-picker-item {
+    display: block;
+    width: 100%;
+    max-width: 260px;
+    padding: 7px 12px;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-soft);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+.sc-forward-picker-item:hover {
+    background: var(--color-accent);
+    color: var(--color-primary);
 }
 
 /* -------------------- RESPONSIVE -------------------- */
@@ -832,6 +1176,32 @@ body {
             <option value="">All chats...</option>
         </select>
 
+        <input
+            type="text"
+            class="sc-header-title"
+            id="sc-chat-title"
+            placeholder="Name this chat..."
+            aria-label="Chat purpose or title"
+            autocomplete="off" />
+
+        <button
+            type="button"
+            class="sc-header-btn"
+            id="sc-save"
+            title="Save the chat as a transcript">
+            <span>＋</span>
+            <span class="label">Save</span>
+        </button>
+
+        <button
+            type="button"
+            class="sc-header-btn danger"
+            id="sc-delete"
+            title="Erase this chat (transcript text deleted)">
+            <span>✕</span>
+            <span class="label">Delete</span>
+        </button>
+
         <button
             type="button"
             class="sc-header-btn"
@@ -885,6 +1255,12 @@ body {
 
         <div class="sc-composer">
 
+            <div
+                class="sc-save-status"
+                id="sc-save-status"
+                role="status">
+            </div>
+
             <div class="sc-composer-inner">
 
                 <div class="sc-input-wrap">
@@ -930,12 +1306,6 @@ body {
         </div>
 
         <div
-            class="sc-panel-status"
-            id="sc-save-status"
-            role="status">
-        </div>
-
-        <div
             class="sc-panel-sections"
             id="sc-panel-sections">
         </div>
@@ -953,10 +1323,10 @@ body {
    Add future panel sections here.
    ============================================================ */
 
-/* Auto-hi text + default. This is an experimental feature that may be
-   removed later, so it stays isolated in one small config + one function. */
+/* Auto-hi text: experimental prefill (may be removed later). The toggle's
+   default now comes from settings.behavior.autoHi (app_settings.json), so it
+   can be changed without editing source. */
 const AUTO_HI_TEXT = "hi";
-const AUTO_HI_DEFAULT = true;
 
 const PANEL_SECTIONS = [
     {
@@ -1007,7 +1377,8 @@ const PANEL_SECTIONS = [
                 type: "checkbox",
                 name: "autoHi",
                 label: '"hi" on a new chat',
-                value: AUTO_HI_DEFAULT
+                settingPath: "behavior.autoHi",
+                defaultValue: true
             }
         ]
     }
@@ -1388,6 +1759,22 @@ function buildPanel(agent) {
                             ...field,
                             value:
                                 agent.description
+                        };
+                    }
+
+                    if (field.settingPath) {
+
+                        const value =
+                            readSetting(
+                                field.settingPath
+                            );
+
+                        return {
+                            ...field,
+                            value:
+                                value === undefined
+                                    ? field.defaultValue
+                                    : value
                         };
                     }
 
@@ -1803,6 +2190,11 @@ let activeAgent = null;
 let activeSession = null;
 let settings = {};
 
+/* Id of the SAVED chat currently open in the composer (read-only view). When
+   the user is chatting live (activeSession.sessionId set), that session id
+   wins; openedChatId only matters after openChat() rendered an old chat. */
+let openedChatId = null;
+
 
 /* ============================================================
    7. DOM REFERENCES
@@ -1873,6 +2265,21 @@ const DOM = {
     chats:
         document.getElementById(
             "sc-chats"
+        ),
+
+    chatTitle:
+        document.getElementById(
+            "sc-chat-title"
+        ),
+
+    saveButton:
+        document.getElementById(
+            "sc-save"
+        ),
+
+    deleteButton:
+        document.getElementById(
+            "sc-delete"
         )
 };
 
@@ -2010,6 +2417,13 @@ function addBubble(
         renderMarkdown(content)
     );
 
+    /* Bubble action buttons — only on real user/agent messages, not system notes. */
+    if (role !== "system") {
+        body.appendChild(
+            buildBubbleActions(content, body)
+        );
+    }
+
     contentWrap.appendChild(body);
     message.appendChild(contentWrap);
 
@@ -2017,6 +2431,228 @@ function addBubble(
 
     scrollToBottom();
 }
+
+
+/* ============================================================
+   9b. BUBBLE ACTION FUNCTIONS
+   ============================================================ */
+
+/* Singleton toast element — created once and reused. */
+function getToast() {
+    let toast = document.getElementById("sc-toast-singleton");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "sc-toast-singleton";
+        toast.className = "sc-toast";
+        document.body.appendChild(toast);
+    }
+    return toast;
+}
+
+let _toastTimer = null;
+function showToast(message, duration = 2200) {
+    const toast = getToast();
+    toast.textContent = message;
+    toast.classList.add("show");
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+    }, duration);
+}
+
+
+/* Build the four-button action row for a single bubble. */
+function buildBubbleActions(rawContent, bodyEl) {
+
+    const row = el("div", "sc-bubble-actions");
+
+    /* 1. Copy */
+    const copyBtn = el("button", "sc-bubble-btn", "📋");
+    copyBtn.type = "button";
+    copyBtn.title = "Copy message text";
+    copyBtn.setAttribute("aria-label", "Copy");
+    copyBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        copyBubble(rawContent, copyBtn);
+    });
+    row.appendChild(copyBtn);
+
+    /* 2. Code / raw view toggle */
+    const codeBtn = el("button", "sc-bubble-btn", "\u003c/\u003e");
+    codeBtn.type = "button";
+    codeBtn.title = "Toggle raw/code view";
+    codeBtn.setAttribute("aria-label", "Code view");
+    codeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleCodeView(rawContent, bodyEl, codeBtn);
+    });
+    row.appendChild(codeBtn);
+
+    /* 3. Forward to another agent */
+    const fwdBtn = el("button", "sc-bubble-btn", "↗");
+    fwdBtn.type = "button";
+    fwdBtn.title = "Forward to another agent";
+    fwdBtn.setAttribute("aria-label", "Forward to agent");
+    fwdBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleForwardPicker(rawContent, bodyEl, fwdBtn);
+    });
+    row.appendChild(fwdBtn);
+
+    /* 4. Bookmark (placeholder) */
+    const bookmarkBtn = el("button", "sc-bubble-btn", "★");
+    bookmarkBtn.type = "button";
+    bookmarkBtn.title = "Bookmark (coming soon)";
+    bookmarkBtn.setAttribute("aria-label", "Bookmark");
+    bookmarkBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        bookmarkBubble(bookmarkBtn);
+    });
+    row.appendChild(bookmarkBtn);
+
+    return row;
+}
+
+
+function copyBubble(rawContent, btn) {
+    navigator.clipboard
+        .writeText(rawContent || "")
+        .then(() => {
+            const orig = btn.textContent;
+            btn.textContent = "✓";
+            btn.classList.add("active");
+            setTimeout(() => {
+                btn.textContent = orig;
+                btn.classList.remove("active");
+            }, 1400);
+        })
+        .catch(() => showToast("Could not copy to clipboard."));
+}
+
+
+function toggleCodeView(rawContent, bodyEl, btn) {
+
+    const existing = bodyEl.querySelector("[data-raw-view]");
+
+    if (existing) {
+        /* Restore normal markdown view */
+        existing.remove();
+        bodyEl.querySelectorAll(":not(.sc-bubble-actions)").forEach(n => {
+            n.style.display = "";
+        });
+        btn.classList.remove("active");
+        btn.title = "Toggle raw/code view";
+        return;
+    }
+
+    /* Hide rendered content (keep action buttons) */
+    Array.from(bodyEl.childNodes).forEach(node => {
+        if (node.nodeType === 1 && !node.classList.contains("sc-bubble-actions")) {
+            node.style.display = "none";
+        }
+    });
+
+    const pre = document.createElement("pre");
+    pre.dataset.rawView = "1";
+    pre.style.cssText = "white-space:pre-wrap;word-break:break-word;margin:0;padding:0;background:transparent;color:inherit;font-size:12px;";
+    pre.textContent = rawContent || "";
+
+    /* Insert before the actions row */
+    bodyEl.insertBefore(pre, bodyEl.querySelector(".sc-bubble-actions"));
+
+    btn.classList.add("active");
+    btn.title = "Back to formatted view";
+}
+
+
+/* Open/close an inline agent-picker popover for forwarding the message. */
+function toggleForwardPicker(rawContent, bodyEl, fwdBtn) {
+
+    /* Close any existing picker on the page. */
+    const existing = document.querySelector(".sc-forward-picker");
+    if (existing) {
+        existing.remove();
+        if (existing._sourceBtn === fwdBtn) {
+            fwdBtn.classList.remove("active");
+            return;
+        }
+    }
+
+    fwdBtn.classList.add("active");
+
+    const picker = document.createElement("div");
+    picker.className = "sc-forward-picker";
+    picker._sourceBtn = fwdBtn;
+
+    const title = el("div", "sc-forward-picker-title", "Forward to agent");
+    picker.appendChild(title);
+
+    /* Every agent EXCEPT the one currently being chatted with, so you cannot
+       forward a message back to its own conversation. */
+    const agents = Array
+        .from(agentsById.values())
+        .filter(agent => agent.id !== activeAgent?.id)
+        .sort((a, b) =>
+            String(a.name || "").localeCompare(String(b.name || ""))
+        );
+
+    if (!agents.length) {
+        const none = el("div", "sc-forward-picker-item", "No other agents loaded.");
+        none.style.color = "var(--color-text-faint)";
+        none.style.pointerEvents = "none";
+        picker.appendChild(none);
+    } else {
+        agents.forEach(agent => {
+            const item = el(
+                "button",
+                "sc-forward-picker-item",
+                `${agent.name}${agent.description ? " - " + agent.description : ""}`
+            );
+            item.type = "button";
+            item.title = agent.description || agent.id;
+            item.addEventListener("click", () => {
+                picker.remove();
+                fwdBtn.classList.remove("active");
+                forwardToAgent(rawContent, agent);
+            });
+            picker.appendChild(item);
+        });
+    }
+
+    /* Position relative to bodyEl */
+    bodyEl.style.position = "relative";
+    bodyEl.appendChild(picker);
+
+    /* Close on outside click */
+    const onOutside = (e) => {
+        if (!picker.contains(e.target) && e.target !== fwdBtn) {
+            picker.remove();
+            fwdBtn.classList.remove("active");
+            document.removeEventListener("click", onOutside, { capture: true });
+        }
+    };
+    setTimeout(() => document.addEventListener("click", onOutside, { capture: true }), 0);
+}
+
+
+async function forwardToAgent(rawContent, targetAgent) {
+
+    if (!rawContent || !targetAgent) return;
+
+    /* Open the chat page for the target agent in a new tab with the message pre-filled. */
+    const url = `/static/chat.html?agent=${encodeURIComponent(targetAgent.id)}&prefill=${encodeURIComponent(rawContent)}`;
+    window.open(url, `ai-chat-${targetAgent.id}`, "width=900,height=680,resizable=yes,scrollbars=yes");
+
+    showToast(`Forwarding to ${targetAgent.name}…`);
+}
+
+
+function bookmarkBubble(btn) {
+    showToast("Bookmarks coming soon! 🔖");
+    btn.classList.add("active");
+    setTimeout(() => btn.classList.remove("active"), 1600);
+}
+
 
 
 function clearMessages() {
@@ -2071,6 +2707,38 @@ function renderWelcome() {
             )
         );
     }
+
+    const hints =
+        el(
+            "div",
+            "sc-welcome-hints"
+        );
+
+    hints.appendChild(
+        el(
+            "span",
+            "sc-welcome-hint",
+            "Markdown rendered"
+        )
+    );
+
+    hints.appendChild(
+        el(
+            "span",
+            "sc-welcome-hint",
+            "Per-agent sessions"
+        )
+    );
+
+    hints.appendChild(
+        el(
+            "span",
+            "sc-welcome-hint",
+            "Transcripts saved"
+        )
+    );
+
+    box.appendChild(hints);
 
     DOM.messages.appendChild(box);
 }
@@ -2263,6 +2931,8 @@ async function openChat(id) {
 
         clearMessages();
 
+        openedChatId = id;
+
         (chat.messages || []).forEach(message => {
 
             addBubble(
@@ -2291,6 +2961,8 @@ async function openChat(id) {
             activeSession.sessionId = null;
         }
 
+        setChatTitle(chat.title || "");
+
         setSaveStatus(
             `Opened: ${chat.title || chat.fileName} (read-only)`,
             "ok"
@@ -2309,21 +2981,12 @@ async function openChat(id) {
    13. SEND FLOW
    ============================================================ */
 
-async function handleSend() {
-
-    const text =
-        DOM.input.value.trim();
-
-    if (
-        !text ||
-        !activeSession ||
-        activeSession.isWaiting
-    ) {
-        return;
-    }
-
-    DOM.input.value = "";
-    autogrow();
+/* Core turn pipeline shared by the composer and the chat-test runner: adds
+   the user bubble, waits for the /api/chat reply, appends the assistant
+   bubble + session state, and returns the raw reply text. Throws on failure;
+   callers decide how to surface it (handleSend shows a system bubble, the
+   test runner marks the current test as Error). */
+async function sendTurn(text) {
 
     activeSession.addUserMessage(text);
 
@@ -2338,12 +3001,7 @@ async function handleSend() {
 
     try {
 
-        const values = getPanelValues();
-
-        const userTitle =
-            String(
-                values.chatTitle || ""
-            ).trim();
+        const title = getChatTitle();
 
         const result =
             await sendChat({
@@ -2362,7 +3020,7 @@ async function handleSend() {
                 sessionId:
                     activeSession.sessionId || "",
 
-                title: userTitle,
+                title,
 
                 newChat:
                     !activeSession.sessionId
@@ -2372,6 +3030,10 @@ async function handleSend() {
             result.session_id,
             result.title
         );
+
+        /* Sending while an old chat is open (read-only view) starts a fresh
+           server session - from here on Delete targets the live chat. */
+        openedChatId = null;
 
         activeSession.addAssistantMessage(
             result.reply,
@@ -2388,6 +3050,37 @@ async function handleSend() {
             "Chat tracked on the server.",
             "ok"
         );
+
+        return result.reply;
+
+    } catch (error) {
+
+        setWaiting(false);
+        throw error;
+    }
+}
+
+
+async function handleSend() {
+
+    const text =
+        DOM.input.value.trim();
+
+    if (
+        testRunActive ||
+        !text ||
+        !activeSession ||
+        activeSession.isWaiting
+    ) {
+        return;
+    }
+
+    DOM.input.value = "";
+    autogrow();
+
+    try {
+
+        await sendTurn(text);
 
     } catch (error) {
 
@@ -2446,6 +3139,22 @@ function togglePanel() {
    15. PANEL STATE + ACTIONS
    ============================================================ */
 
+/* Read a dotted path (e.g. "behavior.autoHi") from the app settings that
+   boot() loaded via GET /api/settings. */
+function readSetting(path) {
+
+    return String(path)
+        .split(".")
+        .reduce(
+            (node, key) =>
+                node == null
+                    ? undefined
+                    : node[key],
+            settings
+        );
+}
+
+
 /* Collect the current value of every panel control that has a
    data-name. Checkboxes return booleans; everything else returns
    its value string. Kept separate from rendering so panel state
@@ -2473,6 +3182,52 @@ function getPanelValues() {
 }
 
 
+/* Read the current value of the panel's chatTitle field (may not exist yet
+   if the panel has not been built). */
+function chatTitlePanelValue() {
+
+    const node =
+        document.querySelector(
+            '.sc-panel-sections [data-name="chatTitle"]'
+        );
+
+    return node
+        ? String(node.value || "").trim()
+        : "";
+}
+
+
+/* The chat purpose/name: the header field wins, the panel field is the
+   fallback, so typing in either place works. */
+function getChatTitle() {
+
+    return (
+        String(DOM.chatTitle.value || "").trim() ||
+        chatTitlePanelValue()
+    );
+}
+
+
+/* Write the chat name to BOTH the header field and the panel field, keeping
+   the two in sync. */
+function setChatTitle(value) {
+
+    const text =
+        String(value || "").trim();
+
+    DOM.chatTitle.value = text;
+
+    const node =
+        document.querySelector(
+            '.sc-panel-sections [data-name="chatTitle"]'
+        );
+
+    if (node) {
+        node.value = text;
+    }
+}
+
+
 /* Start the current agent completely fresh: finalize the active chat on the
    server, wipe the session data + rendered bubbles, and prepare the input for
    the next message. This is the single source of truth used by the header
@@ -2484,6 +3239,8 @@ async function startNewChat() {
     if (activeSession) {
         activeSession.newChat();
     }
+
+    openedChatId = null;
 
     clearMessages();
 
@@ -2593,10 +3350,7 @@ async function finalizeActiveChat({ quiet = false } = {}) {
         return null;
     }
 
-    let title =
-        String(
-            getPanelValues().chatTitle || ""
-        ).trim();
+    let title = getChatTitle();
 
     if (!title) {
 
@@ -2614,6 +3368,7 @@ async function finalizeActiveChat({ quiet = false } = {}) {
 
     if (title) {
         activeSession.title = title;
+        setChatTitle(title);
     }
 
     try {
@@ -2670,6 +3425,114 @@ async function finalizeActiveChat({ quiet = false } = {}) {
 }
 
 
+/* Header "Save" button: finalize the active chat with the purpose/title from
+   the header field (or a prompt), then refresh the saved-chats drop-down.
+   The transcript write + log happen server-side in /api/chats/end. */
+async function handleSaveChat() {
+
+    if (
+        !activeSession ||
+        !activeSession.sessionId
+    ) {
+
+        setSaveStatus(
+            "No active chat to save yet.",
+            "error"
+        );
+
+        return;
+    }
+
+    const result =
+        await finalizeActiveChat();
+
+    if (result) {
+        await refreshChatsDropdown();
+    }
+}
+
+
+/* Header "Delete" button: erase the CURRENT chat - the live in-progress
+   session, or the saved chat currently open (read-only) in the composer.
+   Deletes on BOTH ends: server side removes the .txt transcript(s) + log
+   records (+ the active session file), the frontend wipes the composer. */
+async function handleDeleteChat() {
+
+    if (!activeSession) {
+        return;
+    }
+
+    const id =
+        activeSession.sessionId ||
+        openedChatId;
+
+    if (!id) {
+
+        setSaveStatus(
+            "No chat to delete.",
+            "error"
+        );
+
+        return;
+    }
+
+    const confirmed =
+        window.confirm(
+            "Erase this chat permanently? Its transcript text will be deleted."
+        );
+
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/chats/${encodeURIComponent(id)}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+        if (!response.ok) {
+
+            const body =
+                await response.json().catch(() => ({}));
+
+            throw new Error(
+                String(body.detail || "") ||
+                `Server error ${response.status}`
+            );
+        }
+
+        activeSession.newChat();
+
+        openedChatId = null;
+
+        clearMessages();
+
+        setChatTitle("");
+
+        await refreshChatsDropdown();
+
+        setSaveStatus(
+            "Chat deleted - transcript text erased.",
+            "ok"
+        );
+
+        DOM.input.focus();
+
+    } catch (error) {
+
+        setSaveStatus(
+            `Delete failed: ${error.message}`,
+            "error"
+        );
+    }
+}
+
+
 window.__scActions = {
 
     save() {
@@ -2680,6 +3543,7 @@ window.__scActions = {
         return startNewChat();
     }
 };
+
 
 
 /* ============================================================
@@ -2725,6 +3589,10 @@ function switchToAgent(agent) {
 
     clearMessages();
 
+    setChatTitle("");
+
+    openedChatId = null;
+
     buildPanel(agent);
 }
 
@@ -2747,6 +3615,77 @@ function autogrow() {
 
 
 /* ============================================================
+   17b. APPEARANCE (theme + font family + base font size from app settings)
+   ============================================================ */
+
+/* Theme currently in effect (used by the system-mode listener so it
+   keeps following OS changes for as long as the stored theme is
+   "system"). */
+let scCurrentTheme = "system";
+
+let scSystemListenerAttached = false;
+
+function applyThemeToPage(theme) {
+    scCurrentTheme = (theme === "dark" || theme === "light") ? theme : "system";
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const mode = scCurrentTheme === "system"
+        ? (mq.matches ? "dark" : "light")
+        : scCurrentTheme;
+    document.documentElement.dataset.theme = mode;
+    if (!scSystemListenerAttached) {
+        scSystemListenerAttached = true;
+        mq.addEventListener("change", () => {
+            if (scCurrentTheme === "system") applyThemeToPage("system");
+        });
+    }
+}
+
+/* Applies the stored Appearance settings to this page's CSS variables.
+   Missing/empty values fall back to the :root defaults, so calling it
+   with no settings is always safe. */
+function applyAppearance(appearance) {
+
+    const font =
+        (appearance && appearance.fontFamily) || "";
+
+    const size =
+        Number(
+            (appearance && appearance.fontSize) || 0
+        );
+
+    const theme =
+        (appearance && appearance.theme) || "system";
+
+    const root =
+        document.documentElement;
+
+    applyThemeToPage(theme);
+
+    if (font) {
+        root.style.setProperty(
+            "--app-font-family",
+            font
+        );
+    } else {
+        root.style.removeProperty(
+            "--app-font-family"
+        );
+    }
+
+    if (size > 0) {
+        root.style.setProperty(
+            "--app-font-size",
+            `${size}px`
+        );
+    } else {
+        root.style.removeProperty(
+            "--app-font-size"
+        );
+    }
+}
+
+
+/* ============================================================
    18. APPLICATION BOOT
    ============================================================ */
 
@@ -2759,7 +3698,6 @@ async function boot() {
 
     const agentId =
         params.get("agent") || "";
-
 
     /* Load settings */
 
@@ -2781,6 +3719,10 @@ async function boot() {
     } catch (_) {
         /* Defaults remain active. */
     }
+
+    /* Apply the stored Appearance settings (theme + font family + base font
+       size) so chat.html matches the index page. */
+    applyAppearance(settings);
 
 
     /* Load agents */
@@ -2845,13 +3787,333 @@ async function boot() {
 
     switchToAgent(target);
 
+    /* Smaller screens default to the side panel collapsed so the chat gets the
+       full column width; the header toggle still opens it. Large screens open
+       the panel by default. */
+    if (
+        window.matchMedia("(max-width: 900px)").matches &&
+        !DOM.panel.classList.contains("hidden")
+    ) {
+        DOM.panel.classList.add("hidden");
+    }
+    syncPanelToggle();
+
     /* Auto-"hi" on a fresh chat (if the Behavior checkbox is enabled).
-       Now it only pre-fills "hi" - it waits for you to title + send. */
-    maybeAutoHi();
+       Now it only pre-fills "hi" - it waits for you to title + send.
+
+       Saved-test run mode (?) skips the auto-hi prefill so the run
+       starts clean. */
+    if (params.get("runTests") === "1") {
+        startTestRunInChat();
+    } else {
+        maybeAutoHi();
+    }
+
+    /* ?prefill=<text> — set by the "Forward to agent" button in another chat tab.
+       Overrides the auto-hi prefill so the forwarded message is ready to send.
+       Not used in test-run mode. */
+    const prefillText = params.get("prefill");
+    if (params.get("runTests") !== "1" && prefillText && prefillText.trim()) {
+        DOM.input.value = prefillText.trim();
+        autogrow();
+    }
 
     await refreshChatsDropdown();
 
     DOM.input.focus();
+}
+
+
+/* ============================================================
+   18b. SAVED-TEST RUN MODE (?runTests=1)
+   ============================================================ */
+/* Plays the tests saved in app_settings.json (settings.chatTests.tests)
+   as REAL chat messages, driven through the same sendTurn() pipeline as
+   the composer, so you see - and can save - the actual output. One server
+   session per run (first turn creates it, later turns reuse it). */
+
+let testRunActive = false;
+let testRunCancelled = false;
+
+function stopTestRun() {
+    testRunCancelled = true;
+    const btn = DOM.messages.querySelector(".sc-test-run-stop");
+    if (btn) btn.disabled = true;
+    setSaveStatus("Stopping after the current step...", "");
+}
+
+
+function testScript(test) {
+    if (Array.isArray(test.steps) && test.steps.length) {
+        return test.steps.map(step => String(step).trim()).filter(Boolean);
+    }
+    return String(test.input || "")
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+}
+
+
+function checkExpectation(reply, expectation) {
+    const mode = expectation.mode ||
+        (typeof expectation === "string" ? "string" : "regex");
+    const value = typeof expectation === "string"
+        ? expectation
+        : expectation.value;
+    const text = String(reply || "");
+
+    switch (mode) {
+        case "string": {
+            if (text.toLowerCase().includes(String(value).toLowerCase())) {
+                return { ok: true };
+            }
+            return { ok: false, message: `Expected "${value}" in reply.` };
+        }
+        case "regex": {
+            try {
+                if (new RegExp(value, "i").test(text)) {
+                    return { ok: true };
+                }
+                return { ok: false, message: `Reply did not match "${value}".` };
+            } catch (_) {
+                return { ok: false, message: `Bad regex "${value}".` };
+            }
+        }
+        case "type": {
+            if (value === "nonEmpty") {
+                if (text.trim()) return { ok: true };
+                return { ok: false, message: "Reply was empty." };
+            }
+            if (value === "number") {
+                const digits = text.replace(/[^\d.-]/g, "");
+                if (digits && !Number.isNaN(Number(digits))) {
+                    return { ok: true };
+                }
+                return { ok: false, message: "Reply was not a number." };
+            }
+            return { ok: false, message: `Unknown type check "${value}".` };
+        }
+        default:
+            return { ok: false, message: `Unknown mode "${mode}".` };
+    }
+}
+
+
+async function startTestRunInChat() {
+
+    if (testRunActive) return;
+
+    if (!activeAgent) return;
+
+    const allTests =
+        (
+            settings.chatTests &&
+            Array.isArray(settings.chatTests.tests)
+        )
+            ? settings.chatTests.tests
+            : [];
+
+    const mine = allTests.filter(test =>
+        (test.enabled !== false) &&
+        (!test.agentId || test.agentId === activeAgent.id)
+    );
+
+    if (!mine.length) {
+        addBubble(
+            "system",
+            `No enabled saved tests for "${activeAgent.name}". Add some on the Configuration page.`
+        );
+        setSaveStatus("No enabled tests for this agent.", "error");
+        return;
+    }
+
+    testRunActive = true;
+    testRunCancelled = false;
+
+    /* Pinned status banner with a Stop button, live inside the thread. */
+    const banner = el("div", "sc-test-run-banner");
+    const bannerLabel = el("strong", "", "");
+    const bannerProg = el("span", "", "");
+    const stopBtn = el("button", "sc-test-run-stop", "Stop");
+    stopBtn.type = "button";
+    stopBtn.addEventListener("click", stopTestRun);
+
+    const setBanner = (status, done = null) => {
+        bannerLabel.textContent =
+            status ||
+            `Running tests for ${activeAgent.name}...`;
+        if (done !== null) {
+            bannerProg.textContent =
+                `${done}/${mine.length}`;
+        }
+    };
+
+    banner.appendChild(bannerLabel);
+    banner.appendChild(bannerProg);
+    banner.appendChild(stopBtn);
+    DOM.messages.appendChild(banner);
+    setBanner("Running tests for " + activeAgent.name + "...", 0);
+    scrollToBottom();
+
+    const verdicts = [];
+    let step = 0;
+
+    for (const test of mine) {
+
+        if (testRunCancelled) break;
+        step += 1;
+
+        const script = testScript(test);
+        const expectations =
+            Array.isArray(test.expectations)
+                ? test.expectations
+                : [];
+
+        let finalReply = null;
+        let failedStep = null;
+        let errorMsg = "";
+
+        for (let index = 0; index < script.length; index++) {
+
+            if (testRunCancelled) break;
+
+            try {
+
+                finalReply =
+                    await sendTurn(script[index]);
+
+                setWaiting(false);
+
+            } catch (error) {
+
+                errorMsg = error.message;
+                finalReply = null;
+                break;
+            }
+
+            const expected = expectations[index];
+
+            if (expected) {
+
+                const check =
+                    checkExpectation(
+                        finalReply,
+                        expected
+                    );
+
+                if (!check.ok) {
+
+                    failedStep =
+                        `${check.message} (step ${index + 1})`;
+
+                    break;
+                }
+            }
+        }
+
+        if (errorMsg) {
+
+            setSaveStatus(
+                `Test step failed: ${errorMsg}`,
+                "error"
+            );
+
+            verdicts.push({
+                name: test.name,
+                ok: false,
+                status: "Error",
+                detail: errorMsg
+            });
+
+        } else if (failedStep) {
+
+            verdicts.push({
+                name: test.name,
+                ok: false,
+                status: "Failed",
+                detail: failedStep
+            });
+
+        } else if (testRunCancelled) {
+
+            verdicts.push({
+                name: test.name,
+                ok: false,
+                status: "Stopped",
+                detail: "Run stopped."
+            });
+
+        } else {
+
+            if (test.expectedResult) {
+
+                const check =
+                    checkExpectation(
+                        finalReply,
+                        test.expectedResult
+                    );
+
+                if (!check.ok) {
+
+                    verdicts.push({
+                        name: test.name,
+                        ok: false,
+                        status: "Failed",
+                        detail: check.message
+                    });
+
+                    setBanner("Running tests for " + activeAgent.name + "...", step);
+                    scrollToBottom();
+                    continue;
+                }
+            }
+
+            verdicts.push({
+                name: test.name,
+                ok: true,
+                status: "Passed",
+                detail: ""
+            });
+        }
+
+        setBanner("Running tests for " + activeAgent.name + "...", step);
+        scrollToBottom();
+    }
+
+    banner.remove();
+    testRunActive = false;
+    testRunCancelled = false;
+
+    setWaiting(false);
+    DOM.input.focus();
+
+    const passed =
+        verdicts.filter(v => v.ok).length;
+
+    const summary =
+        `Saved-test run for ${activeAgent.name}: ${passed}/${verdicts.length} passed.`;
+
+    const lines =
+        [summary];
+
+    for (const v of verdicts) {
+
+        const mark = v.ok
+            ? "[PASS]"
+            : "[" + v.status.toUpperCase() + "]";
+
+        lines.push(
+            `${mark}  ${v.name}${(!v.ok && v.detail) ? " - " + v.detail : ""}`
+        );
+    }
+
+    addBubble("system", lines.join("\n"));
+
+    if (verdicts.every(v => v.ok)) {
+        setSaveStatus(summary, "ok");
+    } else {
+        setSaveStatus(summary, "error");
+    }
 }
 
 
@@ -2903,6 +4165,57 @@ DOM.close.addEventListener(
 DOM.clear.addEventListener(
     "click",
     startNewChat
+);
+
+
+DOM.saveButton.addEventListener(
+    "click",
+    handleSaveChat
+);
+
+
+DOM.deleteButton.addEventListener(
+    "click",
+    handleDeleteChat
+);
+
+
+/* Keep the header title field and the panel "Chat title" field in sync
+   live as the user types in either one. node.value writes are non-triggering,
+   so the two listeners cannot loop. */
+DOM.chatTitle.addEventListener(
+    "input",
+    event => {
+
+        const panelNode =
+            document.querySelector(
+                '.sc-panel-sections [data-name="chatTitle"]'
+            );
+
+        if (panelNode) {
+            panelNode.value =
+                event.target.value;
+        }
+    }
+);
+
+
+DOM.panel.addEventListener(
+    "input",
+    event => {
+
+        const target = event.target;
+
+        if (
+            target &&
+            target.dataset &&
+            target.dataset.name === "chatTitle"
+        ) {
+
+            DOM.chatTitle.value =
+                target.value;
+        }
+    }
 );
 
 

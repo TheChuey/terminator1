@@ -1,6 +1,6 @@
 # Creating Agents
 
-Everything you need to add a new agent to the AI Agent Laboratory.
+Everything you need to add a new agent to Terminator1.
 **No Python class required.** A new agent is a folder with two files:
 
 ```

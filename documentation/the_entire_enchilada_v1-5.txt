@@ -1,0 +1,368 @@
+=================================================================
+ the_entire_enchilada_v1-5.txt
+ UPDATES SINCE: the_entire_enchilada_v1-4.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1.4)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_enchilada_v1-4.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the exact
+deltas, and any new code that was added. Files that did NOT change are
+listed at the end so it is clear nothing was missed.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+Two user-driven features landed this round:
+
+  A. THE TESTS CAN NOW RUN INSIDE CHAT.HTML. In V1.4 the saved chat
+     tests could only be run as a VERDICT LIST on the index page. The
+     user asked for a way to INJECT a saved test into chat.html so the
+     actual assistant output can be seen in the real chat UI. Resolution:
+     - The Configuration page's per-agent card got a "Run tests in chat
+       ->" button that opens
+           chat.html?agent=<id>&runTests=1
+     - chat.html gained a saved-test RUN MODE (a new JS section). It
+       plays every ENABLED test for that agent as real chat messages,
+       driven through the existing sendTurn() pipeline (so bubbles,
+       session tracking, transcripts and save all work), with a pinned
+       status banner + Stop button and a verdict summary at the end.
+     - Additionally, the appearance of chat.html now mirrors the index
+       page's typography settings (see feature B below).
+
+  B. AN APPEARANCE SETTINGS SECTION. A new "Appearance" section on the
+     Configuration page with ONE global font family + base font size,
+     applied to BOTH the index page and chat.html. Both pages read the
+     stored appearance settings on load and apply them through CSS
+     variables, and the primary text sizes were converted to rem so the
+     size knob visibly scales the whole UI. The section has a live
+     preview and a Save button that persists via the merging
+     POST /api/settings.
+
+=================================================================
+ 2. FILE: static/js/ui/chat-tests.js           (CHANGED - THIS ROUND)
+=================================================================
+One net addition: a second button on each agent's runner block,
+"Run tests in chat ->" (chosen over running a single test; runs ALL
+enabled tests for the agent):
+
+    const chatRunBtn = document.createElement("button");
+    chatRunBtn.type = "button";
+    chatRunBtn.className = "btn btn-secondary btn-small";
+    chatRunBtn.textContent = "Run tests in chat \u2192";
+    chatRunBtn.title =
+        "Opens chat.html in run mode and plays every enabled test for this agent " +
+        "as real chat messages so you can see the output.";
+    chatRunBtn.style.marginLeft = "6px";
+    runnerWrap.appendChild(chatRunBtn);
+
+    chatRunBtn.addEventListener("click", () => {
+        const url = "chat.html" +
+            "?agent=" + encodeURIComponent(agent.id) +
+            "&runTests=1";
+        window.open(url, "_blank");
+    });
+
+The existing inline verdict runner, Enable/Disable All, step builder,
+test persistence and per-agent cards are unchanged.
+
+=================================================================
+ 3. FILE: static/chat.html                    (HEAVILY CHANGED)
+=================================================================
+This round added feature A's run mode and feature B's typography.
+
+3.1  NEW "18b. SAVED-TEST RUN MODE" JS section
+     (between application boot and section 19 event wiring).
+
+  State + Stop:
+     let testRunActive = false;
+     let testRunCancelled = false;
+
+     function stopTestRun() {
+         testRunCancelled = true;
+         const btn = DOM.messages.querySelector(".sc-test-run-stop");
+         if (btn) btn.disabled = true;
+         setSaveStatus("Stopping after the current step...", "");
+     }
+
+  Boot wiring (inside boot()): when ?runTests=1, the auto-hi prefill and
+  the ?prefill= handling are skipped and the runner starts instead:
+
+     if (params.get("runTests") === "1") {
+         startTestRunInChat();
+     } else {
+         maybeAutoHi();
+     }
+
+     const prefillText = params.get("prefill");
+     if (params.get("runTests") !== "1" && prefillText && prefillText.trim()) { ... }
+
+  Test selection - same rules as the index runner:
+     const mine = allTests.filter(test =>
+         (test.enabled !== false) &&
+         (!test.agentId || test.agentId === activeAgent.id)
+     );
+
+  Re-added (they were deleted with the old test engine in V1.4):
+     testScript(test)     - steps[] or the legacy input-string splitter
+     checkExpectation()   - string (substring, case-insensitive), regex
+                            (new RegExp(v, "i")), type: nonEmpty | number
+
+  The play loop drives the REAL send pipeline (sendTurn, the same one
+  the composer uses) so every step is a real visible bubble, one server
+  session per run (the first step creates it, later steps reuse it):
+
+     finalReply = await sendTurn(script[index]);
+     setWaiting(false);
+
+  A pinned banner is appended into the thread:
+     DOM.messages.appendChild(banner);  // .sc-test-run-banner w/ Stop btn
+     setBanner("Running tests for " + activeAgent.name + "...", 0);
+
+  Per-step expectations abort that test with the offending step number;
+  a per-test try/catch marks it Error and the run continues; Stop breaks
+  after the current step. After the loop the banner is removed and a
+  summary system bubble is appended:
+
+     Saved-test run for <agent>: N/M passed.
+     [PASS]  test name
+     [FAILED]  test name - Expected "x" in reply. (step 2)
+     ...
+
+  setSaveStatus() shows the summary (ok = all passed). Composer input is
+  protected from mid-run typing: handleSend() early-returns while
+  testRunActive.
+
+3.2  NEW "17b. APPEARANCE" JS section (before boot):
+
+     function applyAppearance(appearance) { ... }
+
+  It maps the stored appearance key onto this page's root CSS vars
+  (setting them, or REMOVING them so the :root defaults kick in):
+
+     root.style.setProperty("--app-font-family", font);   // when non-empty
+     root.style.setProperty("--app-font-size",  size+"px");// when > 0
+     (removeProperty otherwise)
+
+  Called in boot() right after the /api/settings load:
+     applyAppearance(settings);
+
+3.3  CSS DENS / typography scaling:
+     - :root gained:
+         --app-font-family: Arial, Helvetica, sans-serif;
+         --app-font-size: 16px;
+     - html gained: font-size: var(--app-font-size, 16px);
+     - body now uses: font-family: var(--app-font-family, Arial, Helvetica,
+       sans-serif); and font-size: var(--app-font-size, 16px);
+     - the visible text sizes were converted from fixed px to rem
+       (16px = 1rem at default, exactly the current look when unset):
+         .sc-welcome-icon 16px -> 1rem
+         .sc-welcome h2    21px -> 1.3125rem
+         .sc-welcome p     14px -> 0.875rem
+         .sc-message-meta strong 12px -> 0.75rem
+         .sc-message-meta span   11px -> 0.6875rem
+         .sc-message-body        14px -> 0.875rem
+         .sc-message.system .sc-message-body 12px -> 0.75rem
+         .sc-input               14px -> 0.875rem
+         .sc-btn                 13px -> 0.8125rem
+         .sc-agent-name          15px -> 0.9375rem
+         .sc-panel-title         12px -> 0.75rem
+       (Badges, timestamps and drop-down chrome stay fixed px.)
+     - NEW .sc-test-run-banner / .sc-test-run-stop rules (flex status
+       strip with an accent background + a red outline Stop button,
+       disabled state styles).
+
+  The bubble-action buttons, forward picker, composer save-status and
+  layout work from V1.4 are untouched and still present.
+
+=================================================================
+ 4. FILE: static/js/ui/appearance.js            (NEW FILE - THIS ROUND)
+=================================================================
+NEW FILE. The Appearance settings section module:
+
+    import { saveAppSettings } from "../api/api.js";
+
+    FONT_OPTIONS = [
+        { value: "", label: "System default" },
+        { value: "Arial, Helvetica, sans-serif", label: "Arial / Helvetica" },
+        { value: "'Segoe UI', Tahoma, sans-serif", label: "Segoe UI" },
+        { value: "Verdana, Geneva, sans-serif", label: "Verdana" },
+        { value: "Georgia, 'Times New Roman', serif", label: "Georgia (serif)" },
+        { value: "'Courier New', monospace", label: "Courier New (mono)" },
+    ];
+
+    SIZE_OPTIONS = [13, 14, 15, 16, 17, 18];   // px
+
+    export function applyAppearance(appearance) { ... }   // sets/removes
+                                                          // --app-font-*
+    export function renderAppearance({ mountEl, settings, onSave }) { ... }
+
+renderAppearance() builds:
+  - ".config-section-heading" "Appearance" title + a .config-note intro
+    stating the setting applies to BOTH pages.
+  - A .panel with two .field <select>s (#appearance-font-family,
+    #appearance-font-size) pre-filled from settings.appearance (missing
+    values default to family "" and size 16).
+  - A .appearance-preview strip that live-refreshes its font-family and
+    font-size on every select change.
+  - "Save appearance" (btn-primary) below, which POSTs
+    { appearance: { fontFamily, fontSize } } through saveAppSettings(),
+    applies the result to the current page via applyAppearance(), and
+    calls the onSave callback. Failure shows the error message.
+
+=================================================================
+ 5. FILE: static/js/ui/config.js               (CHANGED - THIS ROUND)
+=================================================================
+  - IMPORT added: { applyAppearance, renderAppearance } from "./appearance.js"
+  - After the Chat Tests mount a second mount is appended and rendered
+    using the same settings/onSave pattern:
+
+        const appearanceMount = document.createElement("div");
+        appearanceMount.id = "appearance-section";
+        mount.appendChild(appearanceMount);
+
+        renderAppearance({
+            mountEl: appearanceMount,
+            settings,
+            onSave: (updated) => {
+                settings = updated || settings;
+                if (typeof onChanged === "function") onChanged(updated);
+            },
+        });
+
+  (The V1.4 h2 fix and chat-tests wiring are unchanged.)
+
+=================================================================
+ 6. FILE: static/js/app.js                     (CHANGED - THIS ROUND)
+=================================================================
+  - IMPORT added: { applyAppearance } from "./ui/appearance.js"
+  - boot() now fetches + caches server settings and applies the stored
+    appearance to the index page immediately:
+
+        // 0. Cache server settings and apply the stored appearance (font + size)
+        //    to THIS page right away - chat.html applies its own copy on load.
+        try {
+            settings = await api.loadAppSettings();
+        } catch (_) {
+            settings = {};
+        }
+        applyAppearance(settings);
+
+  (renderConfig still fetches settings independently; the duplicate GET
+   is a deliberate readability/simplicity tradeoff and is cheap.)
+
+=================================================================
+ 7. FILE: static/css/styles.css                (CHANGED - THIS ROUND)
+=================================================================
+  - :root gained:
+        --app-font-family: Arial, Helvetica, sans-serif;
+        --app-font-size: 16px;
+  - html gained: font-size: var(--app-font-size, 16px);
+  - body now uses font-family: var(--app-font-family, Arial, Helvetica,
+    sans-serif) and font-size: 1rem.
+  - Primary text sizes converted px -> rem (16px base):
+        .field            14px -> 0.875rem
+        .btn-small        13px -> 0.8125rem
+        .card h3          17px -> 1.0625rem
+        .card p           14px -> 0.875rem
+        .status-message   14px -> 0.875rem
+        .section-note     13px -> 0.8125rem
+        .readout pre      13px -> 0.8125rem
+        .config-note      13px -> 0.8125rem
+        .chat-header-info strong 15px -> 0.9375rem
+        .chat-header-info small  12px -> 0.75rem
+        .chat-welcome     14px -> 0.875rem
+        .bubble-header strong 13px -> 0.8125rem
+        .bubble-header span   11px -> 0.6875rem
+        .bubble-body      14px -> 0.875rem
+        .cw-window-info strong 15px -> 0.9375rem
+        .cw-window-info small  12px -> 0.75rem
+        .cw-panel-section-head 12px -> 0.75rem
+        .cw-field / .cw-field-value 13px -> 0.8125rem
+        .cw-field-label   12px -> 0.75rem
+        .cw-panel-section toggle etc. - covered by the above
+        .cw-bubble-header strong 13px -> 0.8125rem
+        .cw-bubble-header span   11px -> 0.6875rem
+        .cw-bubble-body   14px -> 0.875rem
+        .cw-bubble.cw-system .cw-bubble-body 13px -> 0.8125rem
+        .cw-save-status   12px -> 0.75rem
+        .cw-input-hint    12px -> 0.75rem
+  - NEW .appearance-preview rule (dashed border sample strip for the
+    appearance section).
+  - Badges, avatars, timestamps and hints otherwise stay fixed px.
+
+=================================================================
+ 8. FILE: static/config/app_settings.json      (CHANGED - THIS ROUND)
+=================================================================
+NEW top-level key (the tests the user has since added on the config page
+- e.g. custom-mtnwyh6t-krgy scoped to dev_assistant with 3 steps - are
+untouched):
+
+    "appearance": {
+        "fontFamily": "",
+        "fontSize": 0
+    },
+
+Empty family / size 0 mean "use each page's built-in defaults".
+
+=================================================================
+ 9. VERIFICATION PERFORMED THIS ROUND
+=================================================================
+   - node --check on the extracted chat.html <script> block => OK.
+   - node --check (as ES modules) on appearance.js, config.js, app.js,
+     chat-tests.js => OK.
+   - Booted the server and verified:
+       GET /                                 200
+       GET /static/chat.html                 200
+       GET /static/chat.html?agent=dev_assistant&runTests=1   200
+       GET /api/settings                     shows the saved test
+                                             (enabled, agentId=dev_assistant,
+                                              3 steps)
+       POST /api/settings appearance={Verdana,17}
+           -> saved; chatTests (1 test) PRESERVED by the merge
+       POST /api/settings appearance={,0}    -> reset to defaults
+       API-level replay of the exact run flow the page performs:
+           3 steps against dev_assistant in ONE session
+           (chat-... session id reused, replies returned each step)
+       DELETE /api/chats/<id> on that session -> 200 (cleanup)
+   - The app_settings.json appearance key was left at defaults ("" / 0)
+     after testing so the shipped behavior is unchanged until the user
+     changes it.
+
+=================================================================
+ 10. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_enchilada_v1-5.txt`. It is an "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline (the_entire_enchilada_v1-4.txt). It is NOT a full source dump;
+it describes each changed file, the exact deltas, and the new/added
+code, plus an explicit list of files that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, `static/`, and the backend under
+   `app/`) against the versions/descriptions captured in
+   `the_entire_enchilada_v1-5.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_enchilada_v1-6.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).

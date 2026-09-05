@@ -3,5 +3,33 @@
   "defaultModel": "gemma4:e2b",
   "activeDiscussionId": "disc-mthko2ytzf9exz",
   "chatSavePath": "E:\\saved from app",
-  "disableVersioning": false
+  "disableVersioning": false,
+  "behavior": {
+    "autoHi": true
+  },
+  "appearance": {
+    "theme": "system",
+    "fontFamily": "",
+    "fontSize": 0
+  },
+  "chatTests": {
+    "enabled": true,
+    "tests": [
+      {
+        "id": "custom-mtnwyh6t-krgy",
+        "name": "what is you objective",
+        "agentId": "dev_assistant",
+        "steps": [
+          "what is you objective",
+          "who is the user",
+          "list all the cities in california"
+        ],
+        "expectedResult": {
+          "mode": "type",
+          "value": "nonEmpty"
+        },
+        "enabled": true
+      }
+    ]
+  }
 }

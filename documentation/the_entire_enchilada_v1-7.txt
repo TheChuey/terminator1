@@ -1,0 +1,223 @@
+=================================================================
+ the_entire_enchilada_v1-7.txt
+ UPDATES SINCE: the_entire_enchilada_v1-6.txt
+ SCOPE:         NET DELTA ONLY (what actually changed vs V1.6)
+=================================================================
+
+This file chronicles ONLY the changes made to the live project since
+`the_entire_enchilada_v1-6.txt` was produced. It is not a full dump of
+the code. Each section below lists what changed for one file, the exact
+deltas, and any new code that was added. Files that did NOT change are
+listed at the end so it is clear nothing was missed.
+
+=================================================================
+ 1. THE ONE BIG CHANGE (summarized)
+=================================================================
+Two coupled changes this round, both requested by the user:
+
+  - BRAND RENAME. The application is now called **Terminator1**
+    (title-case display name; the folder stays lowercase `terminator1`).
+    Every user-visible brand string on the live pages - plus the README
+    title, the "Creating Agents" intro, and the snapshot branding -
+    was renamed from "AI Agent Laboratory" / "AI Agent Lab" / "AI Agent
+    Chat" to "Terminator1". No behavior changed; only display text.
+
+  - SNAPSHOT HARNESS REWORK. `documentation/_make_snapshot.py` was
+    rebuilt so `APP_SNAPSHOT.md` now captures the CURRENT project:
+      * The file manifest was missing `app/chat_store/` (3 files),
+        `static/js/ui/chat-tests.js`, `static/js/ui/appearance.js`, and
+        `scripts/version_chats.py`. All are now embedded (44 files).
+      * A NEW **Section 3 — CHANGE LOG ARCHIVE (v1-1 .. v1-6)** embeds
+        the verbatim text of every NET-DELTA changelog version file, so
+        the snapshot is a complete application history in the same
+        format as the `the_entire_enchilada*.txt` files.
+      * The old "Section 3" docscript prompt was renumbered to Section 4
+        and refreshed (brand, full changelog list, next-delta example ->
+        v1-7).
+      * Section 1's file-structure tree was rewritten to the current
+        layout (chat_store branch, scripts/, the two new ui files,
+        changelog versions v1-3 .. v1-6, and `static/_archive/` added to
+        the "Excluded" note).
+
+=================================================================
+ 2. FILE: documentation/_make_snapshot.py        (HEAVILY CHANGED)
+=================================================================
+ 2.1  Brand strings (3 sites):
+      - module docstring headline: "Sections 1-3" -> "Sections 1-4",
+        and its Section list now reads:
+            Section 1 -> file structure
+            Section 2 -> folder + file name + full contents
+            Section 3 -> change-log archive (v1-1 .. v1-6)
+            Section 4 -> a docscript AI prompt ...
+      - `parts.append("# APP SNAPSHOT - AI Agent Laboratory\n")` ->
+        `"# APP SNAPSHOT - Terminator1\n"`; the header bullet list adds a
+        "- **Section 3** - change-log archive (the_entire_enchilada
+        v1-1 .. v1-6)" row and renumbers the docscript bullet to
+        Section 4.
+      - In DOCSCRIPT_PROMPT: "**AI Agent Laboratory** project" ->
+        "**Terminator1** project".
+
+ 2.2  FILES manifest - three insertions (all asserted to exist):
+      - after "app/tools/web.py":
+            "app/chat_store/__init__.py",
+            "app/chat_store/logger.py",
+            "app/chat_store/store.py",
+      - after "static/js/ui/config-form.js":
+            "static/js/ui/appearance.js",
+            "static/js/ui/chat-tests.js",
+      - after "requirements.txt":
+            "scripts/version_chats.py",
+      Total embedded files: 38 -> 44.
+
+ 2.3  NEW Section 3 archive machinery:
+      - NEW module constant:
+            CHANGELOGS = [
+                "documentation/the_entire_echilada_v1-1.txt",
+                "documentation/the_entire_enchilada_v1-2.txt",
+                "documentation/the_entire_enchilada_v1-3.txt",
+                "documentation/the_entire_enchilada_v1-4.txt",
+                "documentation/the_entire_enchilada_v1-5.txt",
+                "documentation/the_entire_enchilada_v1-6.txt",
+            ]
+      - NEW function build_archive(): emits
+            ## SECTION 3 - CHANGE LOG ARCHIVE (v1-1 .. v1-6)
+        then, per changelog, the standard
+        `======...`, `FOLDER: documentation`, `FILE: <name>` banner and
+        the full file text inside a four-backtick `text` fence (the logs
+        themselves contain triple-backtick fences, so four depth is
+        required). Missing changelog -> SystemExit, same as FILES.
+      - `build_section3()` renamed to `build_section4()` (title now
+        "## SECTION 4 - DOCSCRIPT ...").
+
+ 2.4  TREE (Section 1) rewrite - current layout:
+      - `app/` gains the `chat_store/` branch (package marker + logger +
+        store with "chat log ownership" comment).
+      - `static/js/` ui row now lists appearance.js and chat-tests.js
+        with comments ("appearance settings (theme, font family/size)",
+        "run agent test-set + integrated test chat runs").
+      - NEW top-level `scripts/version_chats.py` node ("chat versioning
+        helper (dev-side)").
+      - `documentation/` rows now include v1-3 .. v1-6 NET-DELTA logs.
+      - "Excluded from this snapshot" line adds `static/_archive/ (old
+        archived frontend)`.
+      - Root caption line: `terminator1/  (AI Agent Laboratory)` ->
+        `terminator1/  (Terminator1)`.
+
+ 2.5  DOCSCRIPT_PROMPT refresh:
+      - lists all six delta files (the_entire_echilada_v1-1.txt through
+        the_entire_enchilada_v1-6.txt);
+      - "full self-contained snapshot (Sections 1-2)" -> "(Sections 1-4)";
+      - regeneration note now says "this also refreshes this section and
+        embeds the whole change-log archive as Section 3";
+      - next-delta example file renamed `the_entire_enchilada_v1-3.txt`
+        -> `the_entire_enchilada_v1-7.txt`.
+
+ 2.6  Assembly tail: `parts.append(build_archive())` is added before
+      `parts.append(build_section4())`, and the closing print becomes:
+          print(f"wrote {OUT.name}: {len(FILES)} files embedded, "
+                f"{len(CHANGELOGS)} changelogs archived")
+
+=================================================================
+ 3. FILE: static/index.html                      (CHANGED - THIS ROUND)
+=================================================================
+Two display-text only renames:
+  - Line (head):  `<title>AI Agent Lab</title>`
+        ->        `<title>Terminator1</title>`
+  - Line (hero):  `<h1>AI Agent Laboratory</h1>`
+        ->        `<h1>Terminator1</h1>`
+Everything else (pre-paint theme script, stylesheet, markup, inline JS
+behavior) is untouched.
+
+=================================================================
+ 4. FILE: static/chat.html                       (CHANGED - THIS ROUND)
+=================================================================
+One display-text only rename in <head>:
+      `<title>AI Agent Chat</title>`
+        ->  `<title>Terminator1</title>`
+No script or CSS changes; both inline <script> blocks are byte-for-byte
+identical to V1.6.
+
+=================================================================
+ 5. FILE: README.md                              (CHANGED - THIS ROUND)
+=================================================================
+Title line renamed (the file's only brand edit; all body content
+unchanged):
+  - `# AI Agent Laboratory` -> `# Terminator1`
+
+=================================================================
+ 6. FILE: documentation/CREATING_AGENTS.md       (CHANGED - THIS ROUND)
+=================================================================
+Intro sentence renamed:
+  - "Everything you need to add a new agent to the AI Agent Laboratory."
+    -> "Everything you need to add a new agent to Terminator1."
+
+=================================================================
+ 7. FILE: documentation/APP_SNAPSHOT.md          (REGENERATED)
+=================================================================
+Rewritten from scratch by `python documentation/_make_snapshot.py`
+(no hand edits):
+  - Title    : `# APP SNAPSHOT - Terminator1`
+  - Section 1: new file-structure tree (chat_store, scripts/, new ui
+               files, v1-3 .. v1-6 changelog rows, _archive excluded)
+  - Section 2: 44 files embedded (ADDED: app/chat_store/__init__.py,
+               logger.py, store.py; static/js/ui/appearance.js,
+               chat-tests.js; scripts/version_chats.py)
+  - Section 3: NEW change-log archive - all six changelog versions
+               (v1-1 .. v1-6) embedded verbatim in `text` fences
+  - Section 4: refreshed docscript maintenance prompt (Terminator1)
+  Size grew 257,573 bytes -> 579,875 bytes as expected.
+
+=================================================================
+ 8. VERIFICATION PERFORMED THIS ROUND
+=================================================================
+   - `python documentation/_make_snapshot.py` ran clean:
+       wrote APP_SNAPSHOT.md: 44 files embedded, 6 changelogs archived
+   - Booted the server and verified all three renamed strings serve:
+       GET /                       200  <title>Terminator1</title>
+                                     <h1>Terminator1</h1>
+       GET /static/chat.html       200  <title>Terminator1</title>
+   - grep of live static/*.html + README + CREATING_AGENTS for
+     "AI Agent Lab|AI Agent Laboratory|AI Agent Chat" -> no matches.
+   - Historical changelog files (v1.txt, v1-1 .. v1-6, original
+     the_entire_enchilada.txt) intentionally left unmodified - they are
+     archives.
+   - No backend or JS behavior was touched this round, so no
+     node/python rechecks were required for source modules.
+
+=================================================================
+ 9. AI PROMPT FOR THE NEXT STEP
+=================================================================
+You are producing the next revision of a project's change log. Read the
+file `the_entire_enchilada_v1-7.txt`. It is an "updates only" (NET DELTA
+ONLY) change log that archives every change made to the live project up
+until the moment it was written, keyed to the previously archived
+baseline (the_entire_enchilada_v1-6.txt). It is NOT a full source dump;
+it describes each changed file, the exact deltas, and the new/added
+code, plus an explicit list of files that did NOT change.
+
+Your task, in the exact same style and format:
+
+1. Diff every live source file under the project (notably everything
+   under `static/js/`, `static/css/`, `static/`, and the backend under
+   `app/`) against the versions/descriptions captured in
+   `the_entire_enchilada_v1-7.txt`.
+
+2. Write a new file for this next revision (continue the naming
+   convention, e.g. `the_entire_enchilada_v1-8.txt`). Include:
+   - A header banner naming this revision and the file it diffs against.
+   - A short summary of the overarching change(s) for this round.
+   - Per-file sections listing ONLY the net deltas (added, removed,
+     reworded, renamed code; new files; copy/UI text changes). Quote the
+     exact new code or the before/after text where relevant.
+   - An explicit "FILES NOT CHANGED" section so nothing is assumed.
+   - END BY APPENDING A FRESH copy of this same style of AI prompt, but
+     reworded so it instructs the NEXT revision (read THIS new file and
+     produce the one after it), keeping the self-perpetuating workflow
+     alive.
+
+Rules:
+- Report ONLY net changes; never restate code that is unchanged.
+- Never invent changes you cannot verify in the actual source files.
+- Do not modify any source file; only create the new change-log file.
+- Match the formatting conventions used throughout the source log
+  (`====...====` dividers, `FILE:` + deltas sub-headers, concise prose).
